@@ -26,6 +26,7 @@ import { hasReachedCachedQuota } from "./quota-skip.js";
 import { isCfChallengeCooldownActive } from "./cf-challenge-cooldown.js";
 
 import { safeEqual } from "./safe-equal.js";
+import { normalizeMaxConcurrent } from "./account-concurrency.js";
 
 type ResettableQuotaWindow = {
   used_percent: number | null;
@@ -156,6 +157,7 @@ export class AccountRegistry {
       userId,
       label: null,
       codexFingerprintMode: "off",
+      maxConcurrent: null,
       planType,
       proxyApiKey: "codex-proxy-" + randomBytes(24).toString("hex"),
       status: isTokenExpired(token) ? "expired" : "active",
@@ -232,6 +234,15 @@ export class AccountRegistry {
     const entry = this.accounts.get(entryId);
     if (!entry) return false;
     entry.codexFingerprintMode = mode;
+    this.schedulePersist();
+    return true;
+  }
+
+  /** Set the per-account concurrency cap. `null` reverts to the global setting. */
+  setMaxConcurrent(entryId: string, maxConcurrent: number | null): boolean {
+    const entry = this.accounts.get(entryId);
+    if (!entry) return false;
+    entry.maxConcurrent = maxConcurrent;
     this.schedulePersist();
     return true;
   }
@@ -732,6 +743,7 @@ export class AccountRegistry {
       userId: entry.userId,
       label: entry.label,
       codexFingerprintMode: entry.codexFingerprintMode === "session" ? "session" : "off",
+      maxConcurrent: normalizeMaxConcurrent(entry.maxConcurrent),
       planType: entry.planType,
       status: entry.status,
       usage: { ...entry.usage },

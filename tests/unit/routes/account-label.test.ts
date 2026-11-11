@@ -149,4 +149,48 @@ describe("account label API", () => {
 
     expect(res.status).toBe(400);
   });
+  it("PATCH max-concurrent sets a per-account override", async () => {
+    const res = await app.request(`/auth/accounts/${accountId}/max-concurrent`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ max_concurrent: 5 }),
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ success: true, max_concurrent: 5 });
+    expect(pool.getAccounts()[0].maxConcurrent).toBe(5);
+
+    const list = await (await app.request("/auth/accounts")).json();
+    expect(list.accounts[0]).toMatchObject({ maxConcurrent: 5, effectiveMaxConcurrent: 5, activeRequests: 0 });
+  });
+
+  it("PATCH max-concurrent with null reverts to global", async () => {
+    pool.setMaxConcurrent(accountId, 4);
+    const res = await app.request(`/auth/accounts/${accountId}/max-concurrent`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ max_concurrent: null }),
+    });
+    expect(res.status).toBe(200);
+    expect(pool.getAccounts()[0].maxConcurrent).toBeNull();
+  });
+
+  it("PATCH max-concurrent rejects invalid values", async () => {
+    for (const bad of [0, -1, 1.5, 1001, "3"]) {
+      const res = await app.request(`/auth/accounts/${accountId}/max-concurrent`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ max_concurrent: bad }),
+      });
+      expect(res.status).toBe(400);
+    }
+  });
+
+  it("PATCH max-concurrent on nonexistent account returns 404", async () => {
+    const res = await app.request("/auth/accounts/nonexistent/max-concurrent", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ max_concurrent: 2 }),
+    });
+    expect(res.status).toBe(404);
+  });
 });

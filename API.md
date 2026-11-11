@@ -319,6 +319,7 @@ Client keys allow generating sub-keys with specific budgets, model access lists,
 | DELETE | `/auth/accounts/:id` | Delete account |
 | PATCH | `/auth/accounts/:id/label` | Set label (`{ label }`) |
 | PATCH | `/auth/accounts/:id/codex-fingerprint` | Set account TLS fingerprint mode (`{ mode: "off" \| "session" }`) |
+| PATCH | `/auth/accounts/:id/max-concurrent` | Set per-account concurrency cap (`{ max_concurrent: 1-1000 \| null }`; `null` = follow global `auth.max_concurrent_per_account`) |
 
 ### Batch Operations
 

@@ -56,7 +56,27 @@ export interface ClientKeyPublicSummary {
   last_used_at: string | null;
   created_at: string;
   updated_at: string;
+  /** Requests currently in flight for this key. */
+  active_requests: number;
 }
+
+/** Aggregated usage for a key over a time window. */
+export interface ClientKeyPeriodUsage {
+  requests: number;
+  input_tokens: number;
+  output_tokens: number;
+  cached_tokens: number;
+  total_tokens: number;
+  cost_usd: number;
+}
+
+export const CLIENT_KEY_USAGE_PERIODS = {
+  "24h": 24 * 60 * 60 * 1000,
+  "3d": 3 * 24 * 60 * 60 * 1000,
+  "7d": 7 * 24 * 60 * 60 * 1000,
+} as const;
+
+export type ClientKeyUsagePeriod = keyof typeof CLIENT_KEY_USAGE_PERIODS;
 
 export interface CreateClientKeyInput {
   name: string;

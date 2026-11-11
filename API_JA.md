@@ -305,6 +305,7 @@ OpenAI Chat 互換パスは `tools: [{"type":"image_generation"}]` を受け入�
 | DELETE | `/auth/accounts/:id` | アカウントの削除 |
 | PATCH | `/auth/accounts/:id/label` | ラベルの設定（`{ label }`） |
 | PATCH | `/auth/accounts/:id/codex-fingerprint` | TLS フィンガープリントモードの設定（`{ mode: "off" | "session" }`） |
+| PATCH | `/auth/accounts/:id/max-concurrent` | アカウント単位の同時実行数上限を設定（`{ max_concurrent: 1-1000 | null }`、`null` でグローバル `auth.max_concurrent_per_account` に従う） |
 
 ### 一括操作
 

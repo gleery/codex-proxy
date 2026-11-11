@@ -2,7 +2,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
 import { dirname } from "path";
 import { createRequire } from "module";
 import { getDataDir } from "../paths.js";
-import type { ClientKeyEntry } from "./client-key-types.js";
+import type { ClientKeyEntry, ClientKeyPeriodUsage } from "./client-key-types.js";
 
 const require = createRequire(import.meta.url);
 
@@ -68,11 +68,33 @@ interface ClientKeyRow {
   updated_at: string;
 }
 
+/** Hourly usage rows older than this are pruned. */
+const USAGE_RETENTION_HOURS = 31 * 24;
+const HOUR_MS = 60 * 60 * 1000;
+
+interface UsageDelta {
+  requests: number;
+  input_tokens: number;
+  output_tokens: number;
+  cached_tokens: number;
+  cost_usd: number;
+}
+
+function emptyPeriodUsage(): ClientKeyPeriodUsage {
+  return { requests: 0, input_tokens: 0, output_tokens: 0, cached_tokens: 0, total_tokens: 0, cost_usd: 0 };
+}
+
 export class ClientKeyPersistence {
   private sqlitePath: string;
   private jsonPath: string;
   private db: SqliteDatabase | null = null;
   private sqliteFailed = false;
+  /**
+   * Hourly usage buckets kept in memory when SQLite is unavailable.
+   * key: `${keyId}\u0000${hourStartMs}`
+   */
+  private memoryUsage = new Map<string, { keyId: string; hour: number } & UsageDelta>();
+  private lastPruneHour = 0;
 
   constructor(sqlitePath?: string, jsonPath?: string) {
     const dataDir = getDataDir();
@@ -139,6 +161,21 @@ export class ClientKeyPersistence {
       } catch {
         // Column already exists
       }
+
+      // Hourly usage buckets for period (24h / 3d / 7d) statistics.
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS client_key_usage_hourly (
+          key_id TEXT NOT NULL,
+          hour INTEGER NOT NULL,
+          requests INTEGER NOT NULL DEFAULT 0,
+          input_tokens INTEGER NOT NULL DEFAULT 0,
+          output_tokens INTEGER NOT NULL DEFAULT 0,
+          cached_tokens INTEGER NOT NULL DEFAULT 0,
+          cost_usd REAL NOT NULL DEFAULT 0,
+          PRIMARY KEY (key_id, hour)
+        );
+        CREATE INDEX IF NOT EXISTS idx_client_key_usage_hour ON client_key_usage_hourly(hour);
+      `);
 
       this.db = db;
       return db;
@@ -264,6 +301,115 @@ export class ClientKeyPersistence {
         throw new Error(`Failed to save client keys to both SQLite and JSON: ${jsonErr}`);
       }
       console.error(`[ClientKeyPersistence] JSON mirror backup save failed: ${jsonErr}`);
+    }
+  }
+
+  // ── Hourly usage buckets ────────────────────────────────────────
+
+  /** Add one request's usage to the bucket for the hour containing `atMs`. */
+  public recordHourlyUsage(keyId: string, atMs: number, delta: UsageDelta): void {
+    const hour = Math.floor(atMs / HOUR_MS) * HOUR_MS;
+    const db = this.initSqlite();
+    if (db) {
+      try {
+        db.prepare(`
+          INSERT INTO client_key_usage_hourly (key_id, hour, requests, input_tokens, output_tokens, cached_tokens, cost_usd)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(key_id, hour) DO UPDATE SET
+            requests = requests + excluded.requests,
+            input_tokens = input_tokens + excluded.input_tokens,
+            output_tokens = output_tokens + excluded.output_tokens,
+            cached_tokens = cached_tokens + excluded.cached_tokens,
+            cost_usd = cost_usd + excluded.cost_usd
+        `).run(keyId, hour, delta.requests, delta.input_tokens, delta.output_tokens, delta.cached_tokens, delta.cost_usd);
+        this.pruneUsage(hour);
+        return;
+      } catch (err) {
+        console.warn(`[ClientKeyPersistence] Failed to record hourly usage, keeping in memory: ${err}`);
+      }
+    }
+    const mapKey = `${keyId}\u0000${hour}`;
+    const bucket = this.memoryUsage.get(mapKey) ?? {
+      keyId, hour, requests: 0, input_tokens: 0, output_tokens: 0, cached_tokens: 0, cost_usd: 0,
+    };
+    bucket.requests += delta.requests;
+    bucket.input_tokens += delta.input_tokens;
+    bucket.output_tokens += delta.output_tokens;
+    bucket.cached_tokens += delta.cached_tokens;
+    bucket.cost_usd += delta.cost_usd;
+    this.memoryUsage.set(mapKey, bucket);
+    this.pruneUsage(hour);
+  }
+
+  /**
+   * Sum usage per key for buckets whose hour starts at or after the hour
+   * containing `sinceMs`. Granularity is one hour.
+   */
+  public queryUsageSince(sinceMs: number): Record<string, ClientKeyPeriodUsage> {
+    const sinceHour = Math.floor(sinceMs / HOUR_MS) * HOUR_MS;
+    const result: Record<string, ClientKeyPeriodUsage> = {};
+    const add = (keyId: string, row: UsageDelta) => {
+      const acc = result[keyId] ?? (result[keyId] = emptyPeriodUsage());
+      acc.requests += Number(row.requests) || 0;
+      acc.input_tokens += Number(row.input_tokens) || 0;
+      acc.output_tokens += Number(row.output_tokens) || 0;
+      acc.cached_tokens += Number(row.cached_tokens) || 0;
+      acc.cost_usd += Number(row.cost_usd) || 0;
+      acc.total_tokens = acc.input_tokens + acc.output_tokens;
+    };
+
+    const db = this.initSqlite();
+    if (db) {
+      try {
+        const rows = db.prepare(`
+          SELECT key_id, SUM(requests) AS requests, SUM(input_tokens) AS input_tokens,
+                 SUM(output_tokens) AS output_tokens, SUM(cached_tokens) AS cached_tokens,
+                 SUM(cost_usd) AS cost_usd
+          FROM client_key_usage_hourly
+          WHERE hour >= ?
+          GROUP BY key_id
+        `).all(sinceHour) as Array<{ key_id: string } & UsageDelta>;
+        for (const row of rows) add(row.key_id, row);
+      } catch (err) {
+        console.warn(`[ClientKeyPersistence] Failed to query hourly usage: ${err}`);
+      }
+    }
+    for (const bucket of this.memoryUsage.values()) {
+      if (bucket.hour >= sinceHour) add(bucket.keyId, bucket);
+    }
+    return result;
+  }
+
+  /** Drop all hourly usage for a deleted key. */
+  public deleteUsage(keyId: string): void {
+    const db = this.initSqlite();
+    if (db) {
+      try {
+        db.prepare("DELETE FROM client_key_usage_hourly WHERE key_id = ?").run(keyId);
+      } catch (err) {
+        console.warn(`[ClientKeyPersistence] Failed to delete hourly usage for ${keyId}: ${err}`);
+      }
+    }
+    for (const [k, bucket] of this.memoryUsage) {
+      if (bucket.keyId === keyId) this.memoryUsage.delete(k);
+    }
+  }
+
+  /** Prune at most once per hour. */
+  private pruneUsage(currentHour: number): void {
+    if (currentHour === this.lastPruneHour) return;
+    this.lastPruneHour = currentHour;
+    const cutoff = currentHour - USAGE_RETENTION_HOURS * HOUR_MS;
+    const db = this.initSqlite();
+    if (db) {
+      try {
+        db.prepare("DELETE FROM client_key_usage_hourly WHERE hour < ?").run(cutoff);
+      } catch {
+        // best effort
+      }
+    }
+    for (const [k, bucket] of this.memoryUsage) {
+      if (bucket.hour < cutoff) this.memoryUsage.delete(k);
     }
   }
 

@@ -52,6 +52,9 @@ export interface LogRecord {
   provider?: string | null;
   account?: string | null;
   fallback?: boolean;
+  authRole?: "master" | "client_key" | null;
+  clientKeyId?: string | null;
+  clientKeyName?: string | null;
   status?: number | null;
   latencyMs?: number | null;
   stream?: boolean | null;

@@ -87,10 +87,13 @@ interface AccountCardProps {
   onToggleStatus?: (id: string, currentStatus: string) => Promise<string | null>;
   onUpdateLabel?: (id: string, label: string | null) => Promise<string | null>;
   onUpdateCodexFingerprintMode?: (id: string, mode: "off" | "session") => Promise<string | null>;
+  onUpdateMaxConcurrent?: (id: string, maxConcurrent: number | null) => Promise<string | null>;
+  /** Live in-flight snapshot for this account (fresher than `account`). */
+  liveActive?: { active: number; max: number };
   onConsumeResetCredit?: (id: string) => Promise<string | null>;
 }
 
-export function AccountCard({ account, index, onDelete, proxies, onProxyChange, selected, onToggleSelect, onRefreshQuota, onToggleStatus, onUpdateLabel, onUpdateCodexFingerprintMode, onConsumeResetCredit }: AccountCardProps) {
+export function AccountCard({ account, index, onDelete, proxies, onProxyChange, selected, onToggleSelect, onRefreshQuota, onToggleStatus, onUpdateLabel, onUpdateCodexFingerprintMode, onUpdateMaxConcurrent, liveActive, onConsumeResetCredit }: AccountCardProps) {
   const t = useT();
   const { lang } = useI18n();
   const email = account.email || "Unknown";
@@ -294,6 +297,50 @@ export function AccountCard({ account, index, onDelete, proxies, onProxyChange, 
     }
   }, [account.id, fingerprintUpdating, onUpdateCodexFingerprintMode, t]);
 
+  const [maxConcurrentDraft, setMaxConcurrentDraft] = useState<string | null>(null);
+  const [maxConcurrentSaving, setMaxConcurrentSaving] = useState(false);
+  const [maxConcurrentError, setMaxConcurrentError] = useState<string | null>(null);
+  const maxConcurrentValue = maxConcurrentDraft ?? (account.maxConcurrent != null ? String(account.maxConcurrent) : "");
+
+  const handleMaxConcurrentSave = useCallback(async () => {
+    if (!onUpdateMaxConcurrent || maxConcurrentDraft === null || maxConcurrentSaving) return;
+    const trimmed = maxConcurrentDraft.trim();
+    let next: number | null = null;
+    if (trimmed !== "") {
+      const parsed = Number(trimmed);
+      if (!Number.isInteger(parsed) || parsed < 1 || parsed > 1000) {
+        setMaxConcurrentError(t("accountMaxConcurrentInvalid"));
+        return;
+      }
+      next = parsed;
+    }
+    if (next === (account.maxConcurrent ?? null)) {
+      setMaxConcurrentDraft(null);
+      setMaxConcurrentError(null);
+      return;
+    }
+    setMaxConcurrentSaving(true);
+    try {
+      const err = await onUpdateMaxConcurrent(account.id, next);
+      if (err) {
+        setMaxConcurrentError(err);
+      } else {
+        setMaxConcurrentDraft(null);
+        setMaxConcurrentError(null);
+      }
+    } finally {
+      setMaxConcurrentSaving(false);
+    }
+  }, [account.id, account.maxConcurrent, maxConcurrentDraft, maxConcurrentSaving, onUpdateMaxConcurrent, t]);
+
+  const handleMaxConcurrentKeyDown = useCallback((e: KeyboardEvent) => {
+    if (e.key === "Enter") void handleMaxConcurrentSave();
+    if (e.key === "Escape") {
+      setMaxConcurrentDraft(null);
+      setMaxConcurrentError(null);
+    }
+  }, [handleMaxConcurrentSave]);
+
   return (
     <AccountCardSurface selected={selected}>
       {/* Header */}
@@ -407,6 +454,43 @@ export function AccountCard({ account, index, onDelete, proxies, onProxyChange, 
           class="size-4 rounded border-gray-300 text-primary focus:ring-primary/50 disabled:opacity-40"
         />
       </label>
+
+      {/* Per-account concurrency cap */}
+      {onUpdateMaxConcurrent && (
+        <label class="flex items-center justify-between gap-3 text-[0.78rem] mt-2 pt-2 border-t border-slate-100 dark:border-border-dark">
+          <span class="min-w-0">
+            <span class="block text-slate-500 dark:text-text-dim">{t("accountMaxConcurrent")}</span>
+            <span class={`block text-[0.65rem] ${maxConcurrentError ? "text-red-500" : "text-slate-400 dark:text-text-dim/70"}`}>
+              {maxConcurrentError ?? [
+                account.maxConcurrent == null && (liveActive?.max ?? account.effectiveMaxConcurrent) != null
+                  ? t("accountMaxConcurrentHint", { n: (liveActive?.max ?? account.effectiveMaxConcurrent)! })
+                  : null,
+                t("accountMaxConcurrentActive", {
+                  active: `${liveActive?.active ?? account.activeRequests ?? 0}/${liveActive?.max ?? account.effectiveMaxConcurrent ?? "-"}`,
+                }),
+              ].filter(Boolean).join(" · ")}
+            </span>
+          </span>
+          <input
+            type="number"
+            inputMode="numeric"
+            min={1}
+            max={1000}
+            step={1}
+            aria-label={t("accountMaxConcurrent")}
+            value={maxConcurrentValue}
+            placeholder={t("accountMaxConcurrentPlaceholder")}
+            disabled={maxConcurrentSaving}
+            onInput={(e) => {
+              setMaxConcurrentDraft((e.target as HTMLInputElement).value);
+              setMaxConcurrentError(null);
+            }}
+            onKeyDown={handleMaxConcurrentKeyDown}
+            onBlur={() => void handleMaxConcurrentSave()}
+            class="w-20 shrink-0 text-xs px-2 py-1 rounded-md border border-gray-200 dark:border-border-dark bg-white dark:bg-bg-dark text-slate-700 dark:text-text-main focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-40"
+          />
+        </label>
+      )}
 
       {/* Proxy selector */}
       {proxies && onProxyChange && (

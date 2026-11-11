@@ -1,9 +1,11 @@
-import { useState } from "preact/hooks";
+import { useMemo, useState } from "preact/hooks";
 import type { FunctionalComponent, JSX } from "preact";
 import { useClientKeys } from "../../../shared/hooks/use-client-keys";
+import { useLiveConcurrency } from "../../../shared/hooks/use-live-concurrency";
 import { useT } from "../../../shared/i18n/context";
 import { clipboardCopy } from "../../../shared/utils/clipboard";
 import type {
+  ClientKeyUsagePeriod,
   ClientKeyPublicSummary,
   CreateClientKeyInput,
   UpdateClientKeyInput,
@@ -28,7 +30,27 @@ export const ClientKeysPage: FunctionalComponent<ClientKeysPageProps> = ({
     toggleStatus,
     resetUsage,
     deleteKey,
+    usagePeriod,
+    setUsagePeriod,
+    periodUsage,
   } = useClientKeys(masterApiKey);
+
+  const live = useLiveConcurrency(3000);
+  const liveActiveById = useMemo(
+    () => new Map((live?.client_keys ?? []).map((k) => [k.id, k.active])),
+    [live],
+  );
+  const activeFor = (k: ClientKeyPublicSummary) => liveActiveById.get(k.id) ?? k.active_requests ?? 0;
+  const totalActive = live?.global.client_key_active ?? keys.reduce((n, k) => n + (k.active_requests ?? 0), 0);
+  const periodOptions: Array<{ value: ClientKeyUsagePeriod | "all"; label: string }> = [
+    { value: "24h", label: "24H" },
+    { value: "3d", label: "3D" },
+    { value: "7d", label: "7D" },
+    { value: "all", label: t("clientKeyPeriodAll") },
+  ];
+  const periodLabel = periodOptions.find((o) => o.value === usagePeriod)?.label ?? "";
+  const shownCost = usagePeriod === "all" ? totalCostUsd : (periodUsage?.totals.cost_usd ?? 0);
+  const shownRequests = usagePeriod === "all" ? totalRequests : (periodUsage?.totals.requests ?? 0);
 
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [editingKey, setEditingKey] = useState<ClientKeyPublicSummary | null>(null);
@@ -272,7 +294,33 @@ export const ClientKeysPage: FunctionalComponent<ClientKeysPageProps> = ({
       </div>
 
       {/* Global Usage Cards */}
-      <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <div class="flex items-center gap-2 text-xs text-slate-500 dark:text-text-dim">
+          <span class="font-semibold">{t("clientKeyPeriod")}</span>
+          <div class="inline-flex rounded-lg border border-gray-200 dark:border-border-dark overflow-hidden" role="group">
+            {periodOptions.map((o) => (
+              <button
+                key={o.value}
+                type="button"
+                aria-pressed={usagePeriod === o.value}
+                onClick={() => setUsagePeriod(o.value)}
+                class={`px-3 py-1.5 text-xs font-semibold transition-colors cursor-pointer ${
+                  usagePeriod === o.value
+                    ? "bg-primary-action text-white"
+                    : "bg-white dark:bg-card-dark text-slate-600 dark:text-text-dim hover:bg-slate-50 dark:hover:bg-slate-800"
+                }`}
+              >
+                {o.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        {usagePeriod !== "all" && (
+          <span class="text-[11px] text-slate-400 dark:text-text-dim">{t("clientKeyPeriodHint")}</span>
+        )}
+      </div>
+
+      <div class="grid grid-cols-2 md:grid-cols-5 gap-4">
         <div class="bg-white dark:bg-card-dark p-4 rounded-xl border border-gray-200 dark:border-border-dark shadow-sm">
           <div class="text-xs font-semibold text-slate-500 dark:text-text-dim uppercase tracking-wider">{t("totalAll")}</div>
           <div class="text-2xl font-bold text-slate-800 dark:text-slate-100 mt-1">{keys.length}</div>
@@ -284,15 +332,28 @@ export const ClientKeysPage: FunctionalComponent<ClientKeysPageProps> = ({
           </div>
         </div>
         <div class="bg-white dark:bg-card-dark p-4 rounded-xl border border-gray-200 dark:border-border-dark shadow-sm">
-          <div class="text-xs font-semibold text-slate-500 dark:text-text-dim uppercase tracking-wider">{t("clientKeyUsedCost")}</div>
+          <div class="text-xs font-semibold text-slate-500 dark:text-text-dim uppercase tracking-wider">
+            {t("clientKeyUsedCost")} · {periodLabel}
+          </div>
           <div class="text-2xl font-bold text-amber-600 dark:text-amber-400 mt-1">
-            ${totalCostUsd.toFixed(4)}
+            ${shownCost.toFixed(4)}
           </div>
         </div>
         <div class="bg-white dark:bg-card-dark p-4 rounded-xl border border-gray-200 dark:border-border-dark shadow-sm">
-          <div class="text-xs font-semibold text-slate-500 dark:text-text-dim uppercase tracking-wider">{t("clientKeyRequests")}</div>
+          <div class="text-xs font-semibold text-slate-500 dark:text-text-dim uppercase tracking-wider">
+            {t("clientKeyRequests")} · {periodLabel}
+          </div>
           <div class="text-2xl font-bold text-blue-600 dark:text-blue-400 mt-1">
-            {totalRequests.toLocaleString()}
+            {shownRequests.toLocaleString()}
+          </div>
+        </div>
+        <div class="bg-white dark:bg-card-dark p-4 rounded-xl border border-gray-200 dark:border-border-dark shadow-sm">
+          <div class="text-xs font-semibold text-slate-500 dark:text-text-dim uppercase tracking-wider flex items-center gap-1.5">
+            <span class={`inline-block size-1.5 rounded-full ${totalActive > 0 ? "bg-emerald-500 animate-pulse" : "bg-slate-300 dark:bg-slate-600"}`} />
+            {t("clientKeyActiveRequests")}
+          </div>
+          <div class="text-2xl font-bold text-emerald-600 dark:text-emerald-400 mt-1">
+            {totalActive.toLocaleString()}
           </div>
         </div>
       </div>
@@ -319,9 +380,14 @@ export const ClientKeysPage: FunctionalComponent<ClientKeysPageProps> = ({
                 <tr class="border-b border-gray-200 dark:border-border-dark bg-slate-50 dark:bg-slate-900/50 text-slate-500 dark:text-text-dim">
                   <th class="py-3 px-4 font-semibold">{t("clientKeyName")}</th>
                   <th class="py-3 px-4 font-semibold">{t("clientKeySecret")}</th>
+                  {usagePeriod !== "all" && (
+                    <th class="py-3 px-4 font-semibold whitespace-nowrap">{t("clientKeyPeriodUsage", { period: periodLabel })}</th>
+                  )}
                   <th class="py-3 px-4 font-semibold">{t("clientKeyBudget")}</th>
                   <th class="py-3 px-4 font-semibold">{t("clientKeyTokens")}</th>
-                  <th class="py-3 px-4 font-semibold">{t("clientKeyConcurrency")}</th>
+                  <th class="py-3 px-4 font-semibold whitespace-nowrap" title={`${t("clientKeyActiveRequests")} / ${t("clientKeyConcurrency")}`}>
+                    {t("clientKeyActiveRequests")}
+                  </th>
                   <th class="py-3 px-4 font-semibold">{t("clientKeyExpiresAt")}</th>
                   <th class="py-3 px-4 font-semibold">Status</th>
                   <th class="py-3 px-4 font-semibold text-right">Actions</th>
@@ -364,6 +430,19 @@ export const ClientKeysPage: FunctionalComponent<ClientKeysPageProps> = ({
                       <td class="py-3.5 px-4 font-mono text-slate-600 dark:text-text-dim allow-select">
                         {k.key_masked}
                       </td>
+                      {usagePeriod !== "all" && (() => {
+                        const u = periodUsage?.keys[k.id];
+                        return (
+                          <td class="py-3.5 px-4" data-testid={`period-usage-${k.id}`}>
+                            <div class="text-slate-800 dark:text-text-main font-medium">
+                              ${(u?.cost_usd ?? 0).toFixed(4)}
+                            </div>
+                            <div class="text-[10px] text-slate-500 dark:text-text-dim">
+                              {(u?.total_tokens ?? 0).toLocaleString()} tok · {(u?.requests ?? 0).toLocaleString()} req
+                            </div>
+                          </td>
+                        );
+                      })()}
                       <td class="py-3.5 px-4">
                         <div class="text-slate-800 dark:text-text-main font-medium">
                           ${k.used_cost_usd.toFixed(4)}
@@ -392,8 +471,14 @@ export const ClientKeysPage: FunctionalComponent<ClientKeysPageProps> = ({
                           </span>
                         )}
                       </td>
-                      <td class="py-3.5 px-4 text-slate-700 dark:text-text-main">
-                        {k.max_concurrency != null ? `${k.max_concurrency} max` : "∞"}
+                      <td class="py-3.5 px-4 text-slate-700 dark:text-text-main whitespace-nowrap" data-testid={`active-requests-${k.id}`}>
+                        <span class={activeFor(k) > 0 ? "font-semibold text-emerald-600 dark:text-emerald-400" : ""}>
+                          {activeFor(k)}
+                        </span>
+                        <span class="text-slate-500 dark:text-text-dim text-[10px]">
+                          {" / "}
+                          {k.max_concurrency != null ? k.max_concurrency : "∞"}
+                        </span>
                       </td>
                       <td class="py-3.5 px-4">
                         {k.expires_at ? (
