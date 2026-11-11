@@ -573,6 +573,29 @@ export function useAccounts() {
     }
   }, [patchLocal]);
 
+  const updateMaxConcurrent = useCallback(async (
+    id: string,
+    maxConcurrent: number | null,
+  ): Promise<string | null> => {
+    try {
+      const resp = await fetch(`/auth/accounts/${encodeURIComponent(id)}/max-concurrent`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ max_concurrent: maxConcurrent }),
+      });
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}));
+        return data.error || "Failed to update max concurrency";
+      }
+      patchLocal(id, { maxConcurrent });
+      // Effective cap depends on the global setting; reload to stay accurate.
+      void loadAccounts();
+      return null;
+    } catch (err) {
+      return "networkError" + (err instanceof Error ? err.message : "");
+    }
+  }, [patchLocal, loadAccounts]);
+
   return {
     list,
     loading,
@@ -610,5 +633,6 @@ export function useAccounts() {
     toggleStatus,
     updateLabel,
     updateCodexFingerprintMode,
+    updateMaxConcurrent,
   };
 }

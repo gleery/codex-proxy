@@ -21,6 +21,7 @@ import {
   isTokenExpired,
 } from "./jwt-utils.js";
 import type { AccountEntry, AccountsFile, CodexQuota } from "./types.js";
+import { normalizeMaxConcurrent } from "./account-concurrency.js";
 
 const require = createRequire(import.meta.url);
 
@@ -648,6 +649,15 @@ function normalizeAccountEntries(rawEntries: unknown[]): {
       entry.codexFingerprintMode = "off";
       needsPersist = true;
     }
+    // Per-account concurrency override: anything that isn't a positive
+    // integer falls back to null (inherit the global setting).
+    {
+      const normalizedMax = normalizeMaxConcurrent(entry.maxConcurrent);
+      if (entry.maxConcurrent !== normalizedMax) {
+        entry.maxConcurrent = normalizedMax;
+        needsPersist = true;
+      }
+    }
     // Backfill cachedQuota fields
     if (entry.cachedQuota === undefined) {
       entry.cachedQuota = null;
@@ -704,6 +714,7 @@ function migrateFromLegacy(): AccountEntry[] {
       userId: extractUserProfile(data.token)?.chatgpt_user_id ?? null,
       label: null,
       codexFingerprintMode: "off",
+      maxConcurrent: null,
       planType: data.userInfo?.planType ?? null,
       proxyApiKey: data.proxyApiKey ?? "codex-proxy-" + randomBytes(24).toString("hex"),
       status: isTokenExpired(data.token) ? "expired" : "active",

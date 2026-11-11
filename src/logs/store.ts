@@ -21,6 +21,12 @@ export interface LogRecord {
   /** True when this request was served by a fallback (backup account retry or
    *  fallback upstream apikey) rather than the initially acquired account. */
   fallback?: boolean;
+  /** How the caller authenticated: master key or a distributed client key. */
+  authRole?: "master" | "client_key" | null;
+  /** Client key that made the request (null for master / no-auth). */
+  clientKeyId?: string | null;
+  /** Client key display name at request time. */
+  clientKeyName?: string | null;
   status?: number | null;
   latencyMs?: number | null;
   stream?: boolean | null;
@@ -161,7 +167,7 @@ export class LogStore {
 
     if (search) {
       results = results.filter((r) => {
-        const hay = `${r.method} ${r.path} ${r.model ?? ""} ${r.provider ?? ""} ${r.status ?? ""}`.toLowerCase();
+        const hay = `${r.method} ${r.path} ${r.model ?? ""} ${r.provider ?? ""} ${r.status ?? ""} ${r.account ?? ""} ${r.clientKeyName ?? ""} ${r.clientKeyId ?? ""}`.toLowerCase();
         return hay.includes(search);
       });
     }
@@ -193,6 +199,9 @@ export class LogStore {
         if (patch.model !== undefined) record.model = patch.model;
         if (patch.account !== undefined) record.account = patch.account;
         if (patch.fallback !== undefined) record.fallback = patch.fallback;
+        if (patch.authRole !== undefined) record.authRole = patch.authRole;
+        if (patch.clientKeyId !== undefined) record.clientKeyId = patch.clientKeyId;
+        if (patch.clientKeyName !== undefined) record.clientKeyName = patch.clientKeyName;
         if (patch.error !== undefined) record.error = patch.error;
         if (patch.ttftMs !== undefined) record.ttftMs = patch.ttftMs;
         if (patch.durationMs !== undefined) record.durationMs = patch.durationMs;

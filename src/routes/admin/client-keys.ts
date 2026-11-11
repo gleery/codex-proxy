@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import type { ClientKeyPool } from "../../auth/client-key-pool.js";
+import { CLIENT_KEY_USAGE_PERIODS, type ClientKeyUsagePeriod } from "../../auth/client-key-types.js";
 import { getConfig } from "../../config.js";
 import { extractProxyApiKey } from "../../utils/extract-api-key.js";
 import { validateSession } from "../../auth/dashboard-session.js";
@@ -96,12 +97,46 @@ export function createClientKeyAdminRoutes(
     const totalCost = summaries.reduce((acc, k) => acc + k.used_cost_usd, 0);
     const totalReqs = summaries.reduce((acc, k) => acc + k.request_count, 0);
 
+    const activeRequests = summaries.reduce((acc, k) => acc + k.active_requests, 0);
+
     return c.json({
       keys: summaries,
       total: summaries.length,
       active: activeCount,
       total_cost_usd: totalCost,
       total_requests: totalReqs,
+      active_requests: activeRequests,
+    });
+  });
+
+  // GET /admin/client-keys/usage?period=24h|3d|7d — Per-key usage over a
+  // rolling window (hour granularity: the window starts at the top of the
+  // hour `period` ago).
+  app.get("/admin/client-keys/usage", (c) => {
+    const raw = (c.req.query("period") ?? "24h").toLowerCase();
+    if (!(raw in CLIENT_KEY_USAGE_PERIODS)) {
+      c.status(400);
+      return c.json({ error: `Invalid period '${raw}'. Use one of: ${Object.keys(CLIENT_KEY_USAGE_PERIODS).join(", ")}` });
+    }
+    const period = raw as ClientKeyUsagePeriod;
+    const now = Date.now();
+    const since = now - CLIENT_KEY_USAGE_PERIODS[period];
+    const usage = clientKeyPool.getUsageSince(since);
+    const totals = Object.values(usage).reduce(
+      (acc, u) => {
+        acc.requests += u.requests;
+        acc.total_tokens += u.total_tokens;
+        acc.cost_usd += u.cost_usd;
+        return acc;
+      },
+      { requests: 0, total_tokens: 0, cost_usd: 0 },
+    );
+    return c.json({
+      period,
+      since: new Date(Math.floor(since / 3_600_000) * 3_600_000).toISOString(),
+      until: new Date(now).toISOString(),
+      keys: usage,
+      totals,
     });
   });
 

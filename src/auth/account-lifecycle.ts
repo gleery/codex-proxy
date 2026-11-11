@@ -14,6 +14,7 @@ import type { RotationStrategy, RotationState, RotationStrategyName } from "./ro
 import type { AccountRegistry } from "./account-registry.js";
 import type { AccountEntry, AcquiredAccount } from "./types.js";
 import { isCfChallengeCooldownActive } from "./cf-challenge-cooldown.js";
+import { resolveAccountMaxConcurrent, resolveGlobalMaxConcurrent } from "./account-concurrency.js";
 
 const ACQUIRE_LOCK_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
@@ -22,6 +23,15 @@ export interface AccountCapacitySummary {
   total_slots: number;
   used_slots: number;
   available_slots: number;
+}
+
+export interface AccountConcurrencySnapshot {
+  entryId: string;
+  status: AccountEntry["status"];
+  /** In-flight requests currently holding a slot. */
+  active: number;
+  /** Effective cap (per-account override or global default). */
+  max: number;
 }
 
 export class AccountLifecycle {
@@ -85,14 +95,14 @@ export class AccountLifecycle {
     this.cleanupStaleSlots(nowMs);
 
     const config = getConfig();
-    const maxConcurrent = config.auth.max_concurrent_per_account ?? 3;
+    const globalMax = resolveGlobalMaxConcurrent(config.auth.max_concurrent_per_account);
     const skipExhausted = config.quota?.skip_exhausted === true;
     const excludeSet = options?.excludeIds?.length ? new Set(options.excludeIds) : null;
 
     const available = entries.filter(
       (a) =>
         a.status === "active" &&
-        this.slotCount(a.id) < maxConcurrent &&
+        this.slotCount(a.id) < resolveAccountMaxConcurrent(a, globalMax) &&
         (!excludeSet || !excludeSet.has(a.id)) &&
         !isCfChallengeCooldownActive(a.id) &&
         (!skipExhausted || !hasReachedCachedQuota(a, options?.model)),
@@ -192,6 +202,23 @@ export class AccountLifecycle {
     this.popSlot(entryId);
   }
 
+  /** Live per-account slot usage for dashboards. */
+  getConcurrencySnapshot(): AccountConcurrencySnapshot[] {
+    this.cleanupStaleSlots(Date.now());
+    const globalMax = resolveGlobalMaxConcurrent(getConfig().auth.max_concurrent_per_account);
+    return this.registry.getAllEntries().map((entry) => ({
+      entryId: entry.id,
+      status: entry.status,
+      active: this.slotCount(entry.id),
+      max: resolveAccountMaxConcurrent(entry, globalMax),
+    }));
+  }
+
+  /** Number of in-flight requests currently holding a slot on this entry. */
+  getActiveSlotCount(entryId: string): number {
+    return this.slotCount(entryId);
+  }
+
   /** Clear all slots for an entry (called by facade on status mutations). */
   clearLock(entryId: string): void {
     this.acquireLocks.delete(entryId);
@@ -214,7 +241,7 @@ export class AccountLifecycle {
   }> {
     const now = new Date();
     const config = getConfig();
-    const maxConcurrent = config.auth.max_concurrent_per_account ?? 3;
+    const globalMax = resolveGlobalMaxConcurrent(config.auth.max_concurrent_per_account);
     const skipExhausted = config.quota?.skip_exhausted === true;
     const entries = this.registry.getAllEntries();
     for (const entry of entries) {
@@ -224,7 +251,7 @@ export class AccountLifecycle {
     const available = entries.filter(
       (a: AccountEntry) =>
         a.status === "active" &&
-        this.slotCount(a.id) < maxConcurrent &&
+        this.slotCount(a.id) < resolveAccountMaxConcurrent(a, globalMax) &&
         a.planType &&
         !isCfChallengeCooldownActive(a.id) &&
         (!skipExhausted || !hasReachedCachedQuota(a)),
@@ -260,7 +287,7 @@ export class AccountLifecycle {
     const nowMs = Date.now();
     const now = new Date(nowMs);
     const config = getConfig();
-    const maxConcurrent = config.auth.max_concurrent_per_account ?? 3;
+    const globalMax = resolveGlobalMaxConcurrent(config.auth.max_concurrent_per_account);
     const skipExhausted = config.quota?.skip_exhausted === true;
 
     const entries = this.registry.getAllEntries();
@@ -277,14 +304,15 @@ export class AccountLifecycle {
       if (entry.status !== "active") continue;
       if (skipExhausted && hasReachedCachedQuota(entry)) continue;
 
-      const used = Math.min(this.slotCount(entry.id), maxConcurrent);
-      totalSlots += maxConcurrent;
+      const accountMax = resolveAccountMaxConcurrent(entry, globalMax);
+      const used = Math.min(this.slotCount(entry.id), accountMax);
+      totalSlots += accountMax;
       usedSlots += used;
-      availableSlots += maxConcurrent - used;
+      availableSlots += accountMax - used;
     }
 
     return {
-      max_concurrent_per_account: maxConcurrent,
+      max_concurrent_per_account: globalMax,
       total_slots: totalSlots,
       used_slots: usedSlots,
       available_slots: availableSlots,

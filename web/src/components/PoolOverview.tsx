@@ -3,6 +3,7 @@ import { useT, useI18n } from "../../../shared/i18n/context";
 import { creditsToUsd, formatCredits, formatResetTime, formatUsd } from "../../../shared/utils/format";
 import type { Account } from "../../../shared/types";
 import { derivedStatus } from "../lib/accountStatus";
+import type { LiveConcurrency } from "../../../shared/hooks/use-live-concurrency";
 
 /** Default credit→USD rate matching the config schema default. */
 const DEFAULT_CREDITS_PER_USD = 25;
@@ -10,6 +11,7 @@ const DEFAULT_CREDITS_PER_USD = 25;
 interface PoolOverviewProps {
   accounts: Account[];
   creditsPerUsd?: number;
+  liveConcurrency?: LiveConcurrency | null;
 }
 
 export interface PoolStats {
@@ -56,7 +58,7 @@ export function computePoolStats(accounts: Account[], creditsPerUsd = DEFAULT_CR
   return { active, exhausted, totalCredits, totalUsd, hasAnyCredits, topUsage };
 }
 
-export function PoolOverview({ accounts, creditsPerUsd = DEFAULT_CREDITS_PER_USD }: PoolOverviewProps) {
+export function PoolOverview({ accounts, creditsPerUsd = DEFAULT_CREDITS_PER_USD, liveConcurrency }: PoolOverviewProps) {
   const t = useT();
   const { lang } = useI18n();
   const stats = useMemo(() => computePoolStats(accounts, creditsPerUsd), [accounts, creditsPerUsd]);
@@ -75,7 +77,24 @@ export function PoolOverview({ accounts, creditsPerUsd = DEFAULT_CREDITS_PER_USD
         </span>
       </div>
 
-      <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3">
+        {liveConcurrency && (
+          <div data-testid="pool-live-concurrency">
+            <div class="text-xs text-slate-500 dark:text-text-dim flex items-center gap-1">
+              <span class={`inline-block size-1.5 rounded-full ${liveConcurrency.global.active > 0 ? "bg-emerald-500 animate-pulse" : "bg-slate-300 dark:bg-slate-600"}`} />
+              {t("poolLiveConcurrency")}
+            </div>
+            <div class="text-lg font-medium text-primary" title={t("poolLiveConcurrencyHint")}>
+              {liveConcurrency.global.active}
+              <span class="text-xs text-slate-400 dark:text-text-dim"> / {liveConcurrency.global.capacity}</span>
+            </div>
+            {liveConcurrency.client_keys.length > 0 && (
+              <div class="text-xs text-slate-500 dark:text-text-dim">
+                {t("poolClientKeyActive")}: {liveConcurrency.global.client_key_active}
+              </div>
+            )}
+          </div>
+        )}
         <div>
           <div class="text-xs text-slate-500 dark:text-text-dim">{t("poolActiveAccounts")}</div>
           <div class="text-lg font-medium text-success">{stats.active}</div>

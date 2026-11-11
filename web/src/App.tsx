@@ -27,6 +27,7 @@ import { useUpdateStatus } from "../../shared/hooks/use-update-status";
 import { useI18n, useT } from "../../shared/i18n/context";
 import { useDashboardAuth } from "../../shared/hooks/use-dashboard-auth";
 import { useGeneralSettings } from "../../shared/hooks/use-general-settings";
+import { useLiveConcurrency } from "../../shared/hooks/use-live-concurrency";
 import { getShowUpdateDialogPreference, shouldAutoOpenUpdateModal } from "./update-modal-policy";
 import { getLayoutMode, saveLayoutMode, type LayoutMode } from "./lib/layout-preferences";
 import { NAV_ITEMS } from "./navigation";
@@ -141,6 +142,8 @@ function Dashboard() {
   if (hash === "#/proxy-settings") { location.hash = "#/proxies"; return null; }
 
   const activeTab = TABS.find((t) => t.hash === hash)?.hash ?? "";
+  // Live in-flight counts, polled only while the dashboard tab is visible.
+  const liveConcurrency = useLiveConcurrency(3000, activeTab === "");
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -215,6 +218,7 @@ function Dashboard() {
               <PoolOverview
                 accounts={accounts.list}
                 creditsPerUsd={generalSettings.data?.credits_per_usd}
+                liveConcurrency={liveConcurrency}
               />
               <AccountList
                 accounts={accounts.list}
@@ -234,6 +238,8 @@ function Dashboard() {
                 onToggleStatus={accounts.toggleStatus}
                 onUpdateLabel={accounts.updateLabel}
                 onUpdateCodexFingerprintMode={accounts.updateCodexFingerprintMode}
+                onUpdateMaxConcurrent={accounts.updateMaxConcurrent}
+                liveConcurrency={liveConcurrency}
                 fallbackUpstream={accounts.fallbackUpstream}
                 fallbackActive={accounts.fallbackActive}
                 onUpdateFallbackUpstream={accounts.updateFallbackUpstream}

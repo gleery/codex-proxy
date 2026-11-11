@@ -258,6 +258,24 @@ describe("SQLite account persistence", () => {
     ]);
   });
 
+  it("normalizes and round-trips per-account maxConcurrent", async () => {
+    const entries = [
+      makeEntry("max-missing"),
+      { ...makeEntry("max-invalid"), maxConcurrent: 0 },
+      { ...makeEntry("max-float"), maxConcurrent: 2.5 },
+      { ...makeEntry("max-valid"), maxConcurrent: 4 },
+    ];
+    writeFileSync(accountsJsonPath(), JSON.stringify({ accounts: entries }, null, 2), "utf-8");
+
+    const { createFsPersistence } = await freshModule();
+    const firstLoad = createFsPersistence().load();
+    expect(firstLoad.entries.map((entry) => entry.maxConcurrent)).toEqual([null, null, null, 4]);
+
+    rmSync(accountsJsonPath());
+    const sqliteReload = createFsPersistence().load();
+    expect(sqliteReload.entries.map((entry) => entry.maxConcurrent)).toEqual([null, null, null, 4]);
+  });
+
   it("reads refresh tokens from SQLite before a stale JSON mirror", async () => {
     const entry = makeEntry("rt-source", "rt-json-original");
     writeAccountsJson([entry]);

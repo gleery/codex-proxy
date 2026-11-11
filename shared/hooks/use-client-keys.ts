@@ -1,6 +1,8 @@
 import { useState, useCallback, useEffect } from "preact/hooks";
 import type {
+  ClientKeyPeriodUsageResponse,
   ClientKeyPublicSummary,
+  ClientKeyUsagePeriod,
   ClientKeyEntry,
   CreateClientKeyInput,
   UpdateClientKeyInput,
@@ -20,6 +22,9 @@ export function useClientKeys(masterApiKey?: string) {
   const [totalRequests, setTotalRequests] = useState<number>(0);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  /** "all" = cumulative counters on each key; otherwise a rolling window. */
+  const [usagePeriod, setUsagePeriod] = useState<ClientKeyUsagePeriod | "all">("24h");
+  const [periodUsage, setPeriodUsage] = useState<ClientKeyPeriodUsageResponse | null>(null);
 
   const getHeaders = useCallback(async () => {
     const headers: Record<string, string> = {
@@ -150,9 +155,32 @@ export function useClientKeys(masterApiKey?: string) {
     [getHeaders, fetchKeys],
   );
 
+  const fetchUsage = useCallback(async (period: ClientKeyUsagePeriod) => {
+    try {
+      const headers = await getHeaders();
+      const res = await fetch(`/admin/client-keys/usage?period=${period}`, { headers });
+      if (!res.ok) return;
+      const data = (await res.json()) as ClientKeyPeriodUsageResponse;
+      setPeriodUsage(data);
+    } catch {
+      // keep previous snapshot on transient errors
+    }
+  }, [getHeaders]);
+
   useEffect(() => {
     fetchKeys();
   }, [fetchKeys]);
+
+  // Period usage: load on change and refresh every 30s.
+  useEffect(() => {
+    if (usagePeriod === "all") {
+      setPeriodUsage(null);
+      return;
+    }
+    void fetchUsage(usagePeriod);
+    const timer = setInterval(() => void fetchUsage(usagePeriod), 30_000);
+    return () => clearInterval(timer);
+  }, [usagePeriod, fetchUsage]);
 
   return {
     keys,
@@ -166,5 +194,9 @@ export function useClientKeys(masterApiKey?: string) {
     toggleStatus,
     resetUsage,
     deleteKey,
+    usagePeriod,
+    setUsagePeriod,
+    periodUsage,
+    fetchUsage,
   };
 }

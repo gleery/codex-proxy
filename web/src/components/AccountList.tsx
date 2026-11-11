@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "preact/hooks";
+import { useState, useCallback, useEffect, useMemo } from "preact/hooks";
 import { useI18n, useT } from "../../../shared/i18n/context";
 import { AccountCard } from "./AccountCard";
 import { AntigravityAccounts } from "./AntigravityAccounts";
@@ -7,6 +7,7 @@ import { AccountImportExport } from "./AccountImportExport";
 import { FallbackUpstreamCard } from "./FallbackUpstreamCard";
 import type { AccountExportFormat } from "../../../shared/account-transfer-client";
 import type { Account, FallbackUpstreamPublic, ProxyEntry, QuotaWarning } from "../../../shared/types";
+import type { LiveConcurrency } from "../../../shared/hooks/use-live-concurrency";
 
 import { derivedStatus } from "../lib/accountStatus";
 import { accountToolbarControlClass } from "../lib/account-toolbar";
@@ -32,6 +33,9 @@ interface AccountListProps {
   onToggleStatus?: (id: string, currentStatus: string) => Promise<string | null>;
   onUpdateLabel?: (id: string, label: string | null) => Promise<string | null>;
   onUpdateCodexFingerprintMode?: (id: string, mode: "off" | "session") => Promise<string | null>;
+  onUpdateMaxConcurrent?: (id: string, maxConcurrent: number | null) => Promise<string | null>;
+  /** Live in-flight counts; overrides the (30s-polled) values on each card. */
+  liveConcurrency?: LiveConcurrency | null;
   fallbackUpstream?: FallbackUpstreamPublic | null;
   onUpdateFallbackUpstream?: (baseUrl: string, apiKey: string) => Promise<string | null>;
   onDeleteFallbackUpstream?: () => Promise<string | null>;
@@ -49,9 +53,13 @@ function getBrowserStorage(): Storage | null {
   }
 }
 
-export function AccountList({ accounts, antigravityAccounts = [], onAddAntigravity, onDeleteAntigravity, onToggleAntigravityStatus, loading, onDelete, onRefresh, refreshing, lastUpdated, proxies, onProxyChange, onExport, onImport, onToggleStatus, onUpdateLabel, onUpdateCodexFingerprintMode, fallbackUpstream, onUpdateFallbackUpstream, onDeleteFallbackUpstream, fallbackActive = false }: AccountListProps) {
+export function AccountList({ accounts, antigravityAccounts = [], onAddAntigravity, onDeleteAntigravity, onToggleAntigravityStatus, loading, onDelete, onRefresh, refreshing, lastUpdated, proxies, onProxyChange, onExport, onImport, onToggleStatus, onUpdateLabel, onUpdateCodexFingerprintMode, onUpdateMaxConcurrent, liveConcurrency, fallbackUpstream, onUpdateFallbackUpstream, onDeleteFallbackUpstream, fallbackActive = false }: AccountListProps) {
   const t = useT();
   const { lang } = useI18n();
+  const liveById = useMemo(
+    () => new Map((liveConcurrency?.accounts ?? []).map((a) => [a.id, a])),
+    [liveConcurrency],
+  );
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [warnings, setWarnings] = useState<QuotaWarning[]>([]);
   const [visibleCount, setVisibleCount] = useState(() => {
@@ -434,7 +442,7 @@ export function AccountList({ accounts, antigravityAccounts = [], onAddAntigravi
                 console.warn(`[AccountList] Failed to refresh quota for account ${id}: ${resp.status}`);
               }
               onRefresh();
-            }} onToggleStatus={onToggleStatus} onUpdateLabel={onUpdateLabel} onUpdateCodexFingerprintMode={onUpdateCodexFingerprintMode} />
+            }} onToggleStatus={onToggleStatus} onUpdateLabel={onUpdateLabel} onUpdateCodexFingerprintMode={onUpdateCodexFingerprintMode} onUpdateMaxConcurrent={onUpdateMaxConcurrent} liveActive={liveById.get(acct.id)} />
           ))
         )}
         {onAddAntigravity && onDeleteAntigravity && onToggleAntigravityStatus && (

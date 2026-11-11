@@ -44,6 +44,12 @@ export interface Account {
   email: string;
   label?: string;
   codexFingerprintMode?: "off" | "session";
+  /** Per-account concurrency override; null/undefined = follow global. */
+  maxConcurrent?: number | null;
+  /** Concurrency cap actually applied (override or global default). */
+  effectiveMaxConcurrent?: number;
+  /** Requests currently in flight on this account. */
+  activeRequests?: number;
   status: string;
   planType?: string;
   usage?: {
@@ -167,6 +173,27 @@ export interface ClientKeyPublicSummary {
   last_used_at: string | null;
   created_at: string;
   updated_at: string;
+  /** Requests currently in flight for this key. */
+  active_requests?: number;
+}
+
+export type ClientKeyUsagePeriod = "24h" | "3d" | "7d";
+
+export interface ClientKeyPeriodUsage {
+  requests: number;
+  input_tokens: number;
+  output_tokens: number;
+  cached_tokens: number;
+  total_tokens: number;
+  cost_usd: number;
+}
+
+export interface ClientKeyPeriodUsageResponse {
+  period: ClientKeyUsagePeriod;
+  since: string;
+  until: string;
+  keys: Record<string, ClientKeyPeriodUsage>;
+  totals: { requests: number; total_tokens: number; cost_usd: number };
 }
 
 export interface CreateClientKeyInput {

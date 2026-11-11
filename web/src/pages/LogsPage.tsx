@@ -268,6 +268,7 @@ export function LogsPage({ embedded = false }: { embedded?: boolean }) {
                 <div class="w-[68px] shrink-0">{t("logsTime")}</div>
                 <div class="w-[38px] shrink-0 text-center">{t("logsStatus")}</div>
                 <div class="w-[42px] shrink-0 text-center">{t("logsDirection")}</div>
+                <div class="w-[84px] shrink-0">{t("logsUser")}</div>
                 <div class="w-[84px] shrink-0">{t("logsAccount")}</div>
                 <div class="flex-1 min-w-0">{t("logsPath")} / {t("logsModel")}</div>
                 <div class="w-[58px] shrink-0 text-right">{t("logsTtft")}</div>
@@ -318,6 +319,20 @@ export function LogsPage({ embedded = false }: { embedded?: boolean }) {
                         >
                           {t(`logsFilter.${row.direction}`)}
                         </span>
+                      </div>
+                      <div class="w-[84px] shrink-0 text-left pr-1">
+                        {row.clientKeyName ? (
+                          <span
+                            class="inline-block max-w-full truncate px-1.5 py-0.5 rounded text-[10px] font-medium bg-violet-50 text-violet-700 dark:bg-violet-950/40 dark:text-violet-300"
+                            title={row.clientKeyId ? `${row.clientKeyName} (${row.clientKeyId})` : row.clientKeyName}
+                          >
+                            {row.clientKeyName}
+                          </span>
+                        ) : row.authRole === "master" ? (
+                          <span class="text-[10px] text-slate-400 dark:text-text-dim">{t("logsUserMaster")}</span>
+                        ) : (
+                          <span class="text-slate-400 dark:text-text-dim">-</span>
+                        )}
                       </div>
                       <div class="w-[84px] shrink-0 text-left pr-1">
                         {row.fallback ? (
@@ -535,6 +550,16 @@ export function LogsPage({ embedded = false }: { embedded?: boolean }) {
                         <div class="flex justify-between py-0.5 border-b border-slate-100 dark:border-border-dark">
                           <span class="text-slate-400 dark:text-text-dim">{t("logsProvider")}</span>
                           <span class="text-slate-700 dark:text-slate-200">{logs.selected.provider}</span>
+                        </div>
+                      )}
+                      {(logs.selected.clientKeyName || logs.selected.authRole === "master") && (
+                        <div class="flex justify-between py-0.5 border-b border-slate-100 dark:border-border-dark">
+                          <span class="text-slate-400 dark:text-text-dim">{t("logsUser")}</span>
+                          <span class="text-slate-700 dark:text-slate-200">
+                            {logs.selected.clientKeyName
+                              ? `${logs.selected.clientKeyName}${logs.selected.clientKeyId ? ` · ${logs.selected.clientKeyId}` : ""}`
+                              : t("logsUserMaster")}
+                          </span>
                         </div>
                       )}
                       {(logs.selected.account || logs.selected.fallback) && (

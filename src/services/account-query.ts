@@ -5,11 +5,16 @@
 
 import type { AccountPool } from "../auth/account-pool.js";
 import type { AccountEntry, AccountInfo, CodexQuota } from "../auth/types.js";
+import { resolveAccountMaxConcurrent, resolveGlobalMaxConcurrent } from "../auth/account-concurrency.js";
 
 export type EnrichedAccountInfo = AccountInfo & {
   proxyId: string;
   proxyName: string;
   quota?: CodexQuota;
+  /** Concurrency cap actually applied (override or global default). */
+  effectiveMaxConcurrent: number;
+  /** Requests currently in flight on this account. */
+  activeRequests: number;
 };
 
 export interface ProxyResolver {
@@ -21,6 +26,8 @@ export class AccountQueryService {
   constructor(
     private pool: AccountPool,
     private proxyResolver?: ProxyResolver,
+    /** Returns the global `auth.max_concurrent_per_account` (null = default). */
+    private getGlobalMaxConcurrent: () => number | null | undefined = () => null,
   ) {}
 
   listCached(): EnrichedAccountInfo[] {
@@ -60,8 +67,11 @@ export class AccountQueryService {
   }
 
   private enrich(acct: AccountInfo): EnrichedAccountInfo {
+    const globalMax = resolveGlobalMaxConcurrent(this.getGlobalMaxConcurrent());
     return {
       ...acct,
+      effectiveMaxConcurrent: resolveAccountMaxConcurrent(acct, globalMax),
+      activeRequests: this.pool.getActiveSlotCount(acct.id),
       proxyId: this.proxyResolver?.getAssignment(acct.id) ?? "global",
       proxyName:
         this.proxyResolver?.getAssignmentDisplayName(acct.id) ??

@@ -17,6 +17,7 @@ import { createErrorLogRoutes } from "./admin/error-logs.js";
 import { createPolicyGuardRoutes } from "./admin/policy-guard.js";
 import { createClientKeyAdminRoutes } from "./admin/client-keys.js";
 import { createKeepaliveRoutes } from "./admin/keepalive.js";
+import { createConcurrencyRoutes } from "./admin/concurrency.js";
 import { getConfig } from "../config.js";
 import type { UsageStatsStore } from "../auth/usage-stats.js";
 import type { ClientKeyPool } from "../auth/client-key-pool.js";
@@ -92,6 +93,7 @@ export function createWebRoutes(
 
   // Mount admin subroutes
   app.route("/", createHealthRoutes(accountPool));
+  app.route("/", createConcurrencyRoutes(accountPool, clientKeyPool));
   app.route("/", createUpdateRoutes());
   app.route("/", createConnectionRoutes(accountPool));
   app.route("/", createSettingsRoutes(accountPool, getLanRuntime));

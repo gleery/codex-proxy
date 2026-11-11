@@ -30,6 +30,7 @@ import {
   parseAccountImportPayload,
   parseAccountImportText,
 } from "../services/account-transfer-formats.js";
+import { MAX_ACCOUNT_CONCURRENCY_OVERRIDE } from "../auth/account-concurrency.js";
 
 const BatchIdsSchema = z.object({ ids: z.array(z.string()).min(1) });
 const HealthCheckSchema = z.object({
@@ -40,6 +41,9 @@ const HealthCheckSchema = z.object({
 const BatchStatusSchema = z.object({ ids: z.array(z.string()).min(1), status: z.enum(["active", "disabled"]) });
 const LabelSchema = z.object({ label: z.string().max(64).nullable() });
 const CodexFingerprintSchema = z.object({ mode: z.enum(["off", "session"]) });
+const MaxConcurrentSchema = z.object({
+  max_concurrent: z.number().int().min(1).max(MAX_ACCOUNT_CONCURRENCY_OVERRIDE).nullable(),
+});
 export function createAccountRoutes(pool: AccountPool, scheduler: RefreshScheduler, cookieJar?: CookieJar, proxyPool?: ProxyPool, fallbackUpstream?: FallbackUpstreamStore): Hono {
   const app = new Hono();
   const importSvc = new AccountImportService(pool, scheduler, {
@@ -77,6 +81,7 @@ export function createAccountRoutes(pool: AccountPool, scheduler: RefreshSchedul
   const querySvc = new AccountQueryService(
     pool,
     proxyPool ? { getAssignment: (id) => proxyPool.getAssignment(id), getAssignmentDisplayName: (id) => proxyPool.getAssignmentDisplayName(id) } : undefined,
+    () => getConfig().auth?.max_concurrent_per_account,
   );
   const mutationSvc = new AccountMutationService(pool, {
     clearSchedule: (id) => scheduler.clearOne(id),
@@ -181,6 +186,19 @@ export function createAccountRoutes(pool: AccountPool, scheduler: RefreshSchedul
       return c.json({ error: "Account not found" });
     }
     return c.json({ success: true, mode: parsed.data.mode });
+  });
+
+  // Per-account concurrency cap. `max_concurrent: null` reverts to the
+  // global auth.max_concurrent_per_account setting.
+  app.patch("/auth/accounts/:id/max-concurrent", async (c) => {
+    const body = await c.req.json().catch(() => null);
+    const parsed = MaxConcurrentSchema.safeParse(body);
+    if (!parsed.success) { c.status(400); return c.json({ error: "Invalid request", details: parsed.error.issues }); }
+    if (!pool.setMaxConcurrent(c.req.param("id"), parsed.data.max_concurrent)) {
+      c.status(404);
+      return c.json({ error: "Account not found" });
+    }
+    return c.json({ success: true, max_concurrent: parsed.data.max_concurrent });
   });
 
   app.get("/auth/accounts", (c) => {

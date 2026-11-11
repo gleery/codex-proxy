@@ -305,6 +305,7 @@ OpenAI Chat 相容路徑會接受 `tools: [{"type":"image_generation"}]`，但�
 | DELETE | `/auth/accounts/:id` | 刪除帳號 |
 | PATCH | `/auth/accounts/:id/label` | 設定標籤（`{ label }`） |
 | PATCH | `/auth/accounts/:id/codex-fingerprint` | 設定帳號 TLS 指紋模式（`{ mode: "off" | "session" }`） |
+| PATCH | `/auth/accounts/:id/max-concurrent` | 設定帳號級並發上限（`{ max_concurrent: 1-1000 | null }`；`null` 表示跟隨全局 `auth.max_concurrent_per_account`） |
 
 ### 批量操作
 

@@ -11,7 +11,7 @@ import { createFsPersistence } from "./account-persistence.js";
 import { AccountRegistry } from "./account-registry.js";
 import { AccountLifecycle } from "./account-lifecycle.js";
 import type { AccountPersistence, PersistenceLoadHealth } from "./account-persistence.js";
-import type { AccountCapacitySummary } from "./account-lifecycle.js";
+import type { AccountCapacitySummary, AccountConcurrencySnapshot } from "./account-lifecycle.js";
 import type { CodexTokenMetadata } from "./token-metadata.js";
 import type { RotationStrategyName } from "./rotation-strategy.js";
 import type {
@@ -186,6 +186,25 @@ export class AccountPool {
     const changed = this.registry.setCodexFingerprintMode(entryId, mode);
     if (changed) this.evictWsPool(entryId);
     return changed;
+  }
+
+  /**
+   * Set a per-account concurrency cap. `null` reverts to the global
+   * `auth.max_concurrent_per_account`. In-flight requests are not
+   * interrupted; a lowered cap applies to the next acquire.
+   */
+  setMaxConcurrent(entryId: string, maxConcurrent: number | null): boolean {
+    return this.registry.setMaxConcurrent(entryId, maxConcurrent);
+  }
+
+  /** Live per-account concurrency (in-flight vs. effective cap). */
+  getConcurrencySnapshot(): AccountConcurrencySnapshot[] {
+    return this.lifecycle.getConcurrencySnapshot();
+  }
+
+  /** In-flight request count for an account (slots currently held). */
+  getActiveSlotCount(entryId: string): number {
+    return this.lifecycle.getActiveSlotCount(entryId);
   }
 
   // ── Status mutations (coordinate registry + lifecycle lock clear) ─

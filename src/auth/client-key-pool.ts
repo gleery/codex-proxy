@@ -7,6 +7,7 @@ import {
   type CreateClientKeyInput,
   type UpdateClientKeyInput,
   type ClientKeyAccessValidation,
+  type ClientKeyPeriodUsage,
 } from "./client-key-types.js";
 import { calculateUsageCostUsd, loadPricingCatalog, type PricingCatalog } from "./usage-pricing.js";
 
@@ -78,7 +79,23 @@ export class ClientKeyPool {
       last_used_at: k.last_used_at,
       created_at: k.created_at,
       updated_at: k.updated_at,
+      active_requests: this.getActiveCount(k.id),
     };
+  }
+
+  /** Requests currently in flight for a key (tracked whether or not it has a cap). */
+  public getActiveCount(id: string): number {
+    return this.activeConcurrency.get(id) ?? 0;
+  }
+
+  /** Per-key usage aggregated since `sinceMs` (hour granularity). */
+  public getUsageSince(sinceMs: number): Record<string, ClientKeyPeriodUsage> {
+    const usage = this.persistence.queryUsageSince?.(sinceMs) ?? {};
+    // Only report keys that still exist.
+    for (const id of Object.keys(usage)) {
+      if (!this.keys.has(id)) delete usage[id];
+    }
+    return usage;
   }
 
   public getById(id: string): ClientKeyEntry | undefined {
@@ -220,6 +237,12 @@ export class ClientKeyPool {
       throw err;
     }
 
+    try {
+      this.persistence.deleteUsage?.(id);
+    } catch (err) {
+      console.warn(`[ClientKeyPool] Failed to delete hourly usage for client key ${id}:`, err);
+    }
+
     return true;
   }
 
@@ -298,10 +321,12 @@ export class ClientKeyPool {
   public acquireSlot(id: string): boolean {
     const entry = this.keys.get(id);
     if (!entry) return false;
-    if (entry.max_concurrency == null || entry.max_concurrency <= 0) return true;
 
+    // Always count in-flight requests (for live stats); only enforce the
+    // cap when one is configured.
     const current = this.activeConcurrency.get(id) ?? 0;
-    if (current >= entry.max_concurrency) {
+    const limited = entry.max_concurrency != null && entry.max_concurrency > 0;
+    if (limited && current >= entry.max_concurrency!) {
       return false;
     }
     this.activeConcurrency.set(id, current + 1);
@@ -310,6 +335,7 @@ export class ClientKeyPool {
 
   public releaseSlot(id: string): void {
     const current = this.activeConcurrency.get(id) ?? 0;
+    if (current === 0) return;
     if (current <= 1) {
       this.activeConcurrency.delete(id);
     } else {
@@ -358,6 +384,18 @@ export class ClientKeyPool {
     entry.request_count += 1;
     entry.last_used_at = new Date().toISOString();
     entry.updated_at = new Date().toISOString();
+
+    try {
+      this.persistence.recordHourlyUsage?.(id, Date.now(), {
+        requests: 1,
+        input_tokens: inTokens,
+        output_tokens: outTokens,
+        cached_tokens: usage.cached_tokens ?? 0,
+        cost_usd: computedCost,
+      });
+    } catch (err) {
+      console.error(`[ClientKeyPool] Failed to record hourly usage for client key ${id}:`, err);
+    }
 
     try {
       this.persistence.save(this.getAll());

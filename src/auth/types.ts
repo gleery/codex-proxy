@@ -76,6 +76,11 @@ export interface AccountEntry {
   label: string | null;
   /** Account-scoped Codex session convergence. Explicit opt-in; legacy/missing values are off. */
   codexFingerprintMode?: CodexFingerprintMode;
+  /**
+   * Per-account cap on concurrent in-flight requests. Null/undefined means
+   * inherit the global `auth.max_concurrent_per_account` setting.
+   */
+  maxConcurrent?: number | null;
   planType: string | null;
   proxyApiKey: string;
   status: AccountStatus;
@@ -98,6 +103,8 @@ export interface AccountInfo {
   userId: string | null;
   label: string | null;
   codexFingerprintMode: CodexFingerprintMode;
+  /** Per-account concurrency override; null = inherit the global setting. */
+  maxConcurrent: number | null;
   planType: string | null;
   status: AccountStatus;
   usage: AccountUsage;

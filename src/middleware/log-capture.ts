@@ -1,6 +1,7 @@
 import type { Context, Next } from "hono";
 import { getConfig } from "../config.js";
 import { enqueueLogEntry, updateLogEntry } from "../logs/entry.js";
+import { getRequestIdentity } from "../logs/request-identity.js";
 
 const KNOWN_LLM_PATHS = [
   /^\/v1\/chat\/completions$/,
@@ -52,7 +53,13 @@ export async function logCapture(c: Context, next: Next): Promise<void> {
     reasoning_tokens: metrics.reasoningTokens ?? undefined,
   } : undefined;
 
+  const identity = getRequestIdentity(requestId);
+  const identityPatch = identity
+    ? { authRole: identity.authRole, clientKeyId: identity.clientKeyId, clientKeyName: identity.clientKeyName }
+    : {};
+
   const updated = updateLogEntry(requestId, {
+    ...identityPatch,
     status: c.res.status,
     latencyMs: duration,
     ttftMs: metrics?.ttftMs,
