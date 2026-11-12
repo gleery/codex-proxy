@@ -8,7 +8,13 @@
 
 ## [Unreleased]
 
-> 暂无已记录的变更。
+### Added
+
+- macOS 常驻部署脚本：`scripts/deploy/macos.sh install` 一条命令把源码检出构建并注册为 launchd LaunchAgent（登录自启、崩溃自动拉起），另有 `update` / `start` / `stop` / `restart` / `status` / `logs` / `uninstall`。可直接复用桌面版（DMG）的 TLS 原生组件（无需 Rust），并**复制**（不移动）桌面版的账号、Key 和设置；`--lan` 开放局域网访问（未设 API 密钥时需确认）；`CODEX_PROXY_NODE` 可指定 Node，并检查该 Node 能否正常发起 HTTPS 请求。`install --switch` 可从正在服务的桌面版接管：先完成构建，等 `pool.used_slots` 连续为 0 才停止桌面版并复制数据（避免拿到已被轮换的 refresh token）；健康检查失败自动回滚并重新打开桌面版，成功后把桌面版数据目录改名为 `data.migrated-<时间>`，防止它被再次打开时用旧 token 刷新。（`scripts/deploy/macos.sh`、`scripts/deploy/README.md`、`README.md`）
+
+### Fixed
+
+- 修复原生 Codex 生图请求被 400 拒绝的问题：`/v1/images/generations` 的 `quality` 此前只接受 `standard` / `hd`，原生 Codex 发送的 `auto` 和 GPT Image 的 `low` / `medium` / `high` 都会被拒，现在一并接受；generations 与 edits 的 `background` 新增 `transparent`（png / webp 透明背景）。上游映射不变，未知值（如 `quality: "ultra"`、`background: "checkerboard"`）仍在发往上游前返回 400。（`src/routes/shared/image-generation.ts`、`tests/e2e/images.test.ts`）
 
 ## [v2.1.x](https://github.com/icebear0828/codex-proxy/releases?q=2.1) - 2026-09-01 至今
 
