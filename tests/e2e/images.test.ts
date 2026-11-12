@@ -108,6 +108,57 @@ function imagesRequest(body: unknown, app = ctx.app): Promise<Response> {
 }
 
 describe("POST /v1/images/generations", () => {
+  it.each(["png", "webp"])("forwards transparent generation background with %s output", async (format) => {
+    const res = await imagesRequest({
+      model: "gpt-image-2",
+      prompt: "an isolated red circle on a fully transparent background",
+      background: "transparent",
+      output_format: format,
+      quality: "auto",
+    });
+
+    expect(res.status).toBe(200);
+    expect(JSON.parse(getLastTransportBody()!).tools[0]).toMatchObject({
+      type: "image_generation", background: "transparent", output_format: format,
+    });
+  });
+
+  it("rejects an unknown background before upstream", async () => {
+    const res = await imagesRequest({model: "gpt-image-2", prompt: "a circle", background: "checkerboard"});
+    expect(res.status).toBe(400);
+    expect(getLastTransportBody()).toBeNull();
+  });
+
+  it.each(["auto", "low", "medium", "high", "standard", "hd"])(
+    "accepts native Codex and legacy Images quality %s",
+    async (quality) => {
+      const res = await imagesRequest({
+        model: "gpt-image-2",
+        prompt: "a red circle",
+        background: "opaque",
+        size: "auto",
+        quality,
+      });
+
+      expect(res.status).toBe(200);
+      expect((await res.json() as { data: Array<{ b64_json: string }> }).data[0].b64_json)
+        .toBe("ZmFrZS1pbWFnZQ==");
+      expect(JSON.parse(getLastTransportBody()!).tools[0].type).toBe("image_generation");
+    },
+  );
+
+  it("rejects an unknown image quality before upstream", async () => {
+    const res = await imagesRequest({
+      model: "gpt-image-2",
+      prompt: "a red circle",
+      quality: "ultra",
+    });
+
+    expect(res.status).toBe(400);
+    expect(getLastTransportBody()).toBeNull();
+    expect(getMockTransport().post).not.toHaveBeenCalled();
+  });
+
   it("maps an Images request to the configured Codex host and returns b64_json", async () => {
     setTransportPost(async () =>
       makeTransportResponse(buildImageGenStreamChunks(
@@ -545,6 +596,19 @@ describe("POST /v1/images/edits", () => {
       body: JSON.stringify(body),
     });
   }
+
+  it.each(["png", "webp"])("forwards transparent edit background with %s output", async (format) => {
+    const res = await editsRequest({
+      ...editBody,
+      background: "transparent",
+      output_format: format,
+    });
+
+    expect(res.status).toBe(200);
+    expect(JSON.parse(getLastTransportBody()!).tools[0]).toMatchObject({
+      type: "image_generation", background: "transparent", output_format: format,
+    });
+  });
 
   it("maps an Images edits request to an Edit-mode Codex request and returns b64_json", async () => {
     const res = await editsRequest({
