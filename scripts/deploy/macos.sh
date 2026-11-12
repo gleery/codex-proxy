@@ -90,6 +90,7 @@ Options (install / update):
 
 Environment:
   CODEX_PROXY_LAUNCHD_LABEL     LaunchAgent label (default: com.codex-proxy)
+  CODEX_PROXY_NODE              Node binary to use (default: node on PATH)
   CODEX_PROXY_HEALTH_TIMEOUT    Seconds to wait for /health (default: 90)
   CODEX_PROXY_IDLE_SECONDS      --switch: idle time required before quitting
                                 the desktop app (default: 5)
@@ -114,7 +115,7 @@ node_version_ok() {
 
 ensure_node() {
   local candidate p
-  candidate="$(command -v node || true)"
+  candidate="${CODEX_PROXY_NODE:-$(command -v node || true)}"
   if [ -z "$candidate" ]; then
     # Non-login shells (e.g. ssh host cmd) often miss Homebrew's PATH.
     for p in /opt/homebrew/bin/node /usr/local/bin/node; do
@@ -135,13 +136,26 @@ ensure_node() {
     [ -n "$candidate" ] && node_version_ok "$candidate" \
       || die "Node.js 22.13+ is required. Install it (e.g. 'brew install node') and re-run."
   fi
-  NODE_BIN="$(cd "$(dirname "$candidate")" && pwd -P)/$(basename "$candidate")"
+  # Keep symlinked paths as-is (e.g. /opt/homebrew/opt/node@22/bin/node): resolving
+  # them to a versioned Cellar path would break the LaunchAgent after brew upgrade.
+  case "$candidate" in
+    /*) NODE_BIN="$candidate" ;;
+    *) NODE_BIN="$(cd "$(dirname "$candidate")" && pwd)/$(basename "$candidate")" ;;
+  esac
   case "$NODE_BIN" in
     */.nvm/*|*/.volta/*|*/.fnm/*|*/.asdf/*)
       warn "Node comes from a version manager ($NODE_BIN). The LaunchAgent pins this exact path;"
       warn "re-run 'install' after switching Node versions." ;;
   esac
   ok "Node $("$NODE_BIN" -v) ($NODE_BIN)"
+  # Some builds (e.g. ones linked against a stale shared OpenSSL CA bundle) can't
+  # verify public certificates; npm install and token refresh would then fail.
+  if ! "$NODE_BIN" -e 'fetch("https://registry.npmjs.org/",{method:"HEAD",signal:AbortSignal.timeout(15000)}).then(()=>process.exit(0),(e)=>{console.error(e.cause&&e.cause.code||e.message);process.exit(1)})' 2>/tmp/codex-proxy-node-tls.$$; then
+    warn "This Node failed an HTTPS request: $(cat /tmp/codex-proxy-node-tls.$$ 2>/dev/null)"
+    warn "If that is a certificate error, use another Node build, e.g.:"
+    warn "  brew install node@22 && CODEX_PROXY_NODE=/opt/homebrew/opt/node@22/bin/node $0 ..."
+  fi
+  rm -f /tmp/codex-proxy-node-tls.$$
 }
 
 desktop_app_pid() {

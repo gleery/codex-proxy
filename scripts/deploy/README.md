@@ -73,6 +73,9 @@ scripts/deploy/macos.sh uninstall   # 移除 LaunchAgent（保留代码和 data/
   其中的 refresh token 很可能已被轮换失效。**两者不要同时运行**：桌面版发现 8080 被占用会改用随机端口继续运行，
   两边会同时刷新同一批账号的 token。
 - **桌面版组件不兼容时**：如果桌面版版本与当前代码差异较大，复制来的 TLS 组件可能无法加载，脚本会自动删除它并尝试用 Rust 编译。
+- **指定 Node**：`CODEX_PROXY_NODE=/opt/homebrew/opt/node@22/bin/node scripts/deploy/macos.sh install ...`。
+  脚本会检查这个 Node 能否正常发起 HTTPS 请求；个别 Homebrew Node 链接的 OpenSSL 证书库有问题，会导致
+  `npm ci` 报 `UNABLE_TO_GET_ISSUER_CERT_LOCALLY`，这时改用 `node@22` 即可。
 - **通过 nvm / volta 等安装的 Node**：LaunchAgent 记录的是 Node 的绝对路径，切换 Node 版本后请重新执行 `install`。
 - **其它会拉起桌面版的工具**：如果你自己装过「桌面版退出就自动重开」的守护脚本或定时更新桌面版的任务，
   切换后要停用或改成检查本服务，否则它们会再次启动桌面版，与本服务抢端口。
