@@ -213,6 +213,9 @@ npm run dev                        # 开发模式（热重载）
 
 打开 `http://localhost:8080` 登录。
 
+> **macOS 长期运行**（如 Mac mini 做服务器）：`scripts/deploy/macos.sh install` 一键构建并注册为 launchd 常驻服务，
+> 可直接复用桌面版的账号数据和 TLS 组件（无需 Rust），详见 [scripts/deploy/README.md](scripts/deploy/README.md)。
+
 </details>
 
 ### 验证

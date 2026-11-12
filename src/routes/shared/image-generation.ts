@@ -33,7 +33,7 @@ const IMAGE_SIZES = [
 ] as const;
 
 const IMAGE_OUTPUT_FORMATS = ["png", "jpeg", "webp"] as const;
-const IMAGE_BACKGROUNDS = ["auto", "opaque"] as const;
+const IMAGE_BACKGROUNDS = ["auto", "opaque", "transparent"] as const;
 const IMAGE_MODERATION_LEVELS = ["auto", "low"] as const;
 
 const ImageResponseFormatSchema = z.union([
@@ -46,7 +46,8 @@ export const ImageGenerationRequestSchema = z.object({
   model: z.string().trim().min(1),
   prompt: z.string().trim().min(1).max(32768),
   size: z.enum(IMAGE_SIZES).optional(),
-  quality: z.enum(["standard", "hd"]).optional(),
+  // Native Codex sends "auto"; also accept GPT Image qualities and legacy aliases.
+  quality: z.enum(["standard", "hd", "auto", "low", "medium", "high"]).optional(),
   output_format: z.enum(IMAGE_OUTPUT_FORMATS).optional(),
   output_compression: z.number().int().min(0).max(100).optional(),
   background: z.enum(IMAGE_BACKGROUNDS).optional(),
