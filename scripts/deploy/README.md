@@ -55,13 +55,20 @@ scripts/deploy/macos.sh install --switch # 桌面版正在提供服务时：空�
 ```bash
 scripts/deploy/macos.sh status      # 运行状态 + 健康检查
 scripts/deploy/macos.sh logs        # 跟踪日志（logs/codex-proxy.log）
-scripts/deploy/macos.sh restart     # 重启（改了 data/local.yaml 后用）
+scripts/deploy/macos.sh start       # 启动
 scripts/deploy/macos.sh stop        # 停止（下次登录仍会自动启动）
+scripts/deploy/macos.sh restart     # 重启（改了 data/local.yaml 后用）
 scripts/deploy/macos.sh update      # git pull --ff-only → 重新构建 → 重启
 scripts/deploy/macos.sh uninstall   # 移除 LaunchAgent（保留代码和 data/）
 ```
 
-`update` 要求工作区没有未提交的改动。
+- **面板**：浏览器打开 `http://localhost:8080`（局域网其它设备用本机 IP，开了 API 密钥时需登录）。
+  想要独立窗口，可在 Safari 打开面板后选「文件 → 添加到程序坞」。
+- **启停由 launchd 托管**：进程崩溃或被 `kill` 后会自动重新拉起，要让它停下请用 `stop`。`stop` 之后一直保持停止，
+  直到执行 `start` 或下次登录；不想再开机自启就用 `uninstall`（之后重新 `install` 即可恢复，数据不受影响）。
+- `stop` / `restart` / `update` 会中断进行中的请求，客户端需要重试。
+- 在其它电脑上可通过 SSH 执行，例如 `ssh 用户名@服务器地址 '~/codex-proxy/scripts/deploy/macos.sh restart'`。
+- `update` 要求工作区没有未提交的改动（只改了文件权限的不算，例如 `npm ci` 给 bin 脚本加的可执行位）。
 
 ## 注意事项
 

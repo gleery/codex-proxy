@@ -560,11 +560,13 @@ cmd_update() {
   require_macos
   ensure_node
   step "Pulling latest code"
+  # Ignore permission-only changes: `npm ci` marks workspace bin scripts
+  # executable, which would otherwise make every deployed checkout "dirty".
   (cd "$REPO_DIR" && {
-    if ! git diff --quiet || ! git diff --cached --quiet; then
+    if ! git -c core.fileMode=false diff --quiet || ! git -c core.fileMode=false diff --cached --quiet; then
       die "The checkout has local changes; commit or stash them first."
     fi
-    git pull --ff-only
+    git -c core.fileMode=false pull --ff-only
   })
   ensure_native_addon
   build_app
@@ -605,7 +607,6 @@ cmd_status() {
     return 1
   fi
   local cfg port
-  NODE_BIN="$(command -v node || echo node)"
   cfg="$(read_server_config)"; port="$(echo "$cfg" | awk '{print $2}')"
   if curl -fsS --max-time 2 "http://127.0.0.1:$port/health" 2>/dev/null; then
     echo
@@ -647,9 +648,13 @@ main() {
     die "--no-migrate and --migrate-data cannot be combined"
   fi
 
-  # Commands that read config need a Node binary even when not (re)installing.
+  # Commands that read config need a Node binary even when not (re)installing:
+  # prefer the one the service runs with (a non-login shell, e.g. over SSH, may
+  # not have node on PATH).
   case "$cmd" in
-    start|restart) NODE_BIN="$(command -v node || echo node)" ;;
+    start|restart|status)
+      NODE_BIN="$(plutil -extract ProgramArguments.0 raw "$PLIST" 2>/dev/null || command -v node || echo node)"
+      ;;
   esac
 
   case "$cmd" in
