@@ -45,7 +45,10 @@ scripts/deploy/macos.sh install --switch # 桌面版正在提供服务时：空�
 3. 向桌面版发送 SIGTERM（它的「退出」菜单/AppleScript 在 macOS 上只会隐藏到托盘），等端口释放；
 4. **此时才复制数据**——桌面版运行期间会轮换账号的 refresh token，提前复制会拿到旧 token。
    已有的 `./data` 会先备份；
-5. 启动 LaunchAgent。若 `/health` 不正常，自动移除 LaunchAgent 并重新打开桌面版（回滚）。
+5. 启动 LaunchAgent。若 `/health` 不正常，自动移除 LaunchAgent 并重新打开桌面版（回滚）；
+6. 成功后把桌面版的数据目录改名为 `data.migrated-<时间>`（保留不删）。原因同第 4 步：之后本服务会不断轮换
+   refresh token，桌面版若被登录项、守护脚本等再次打开，会用旧 token 刷新并可能导致账号被吊销；
+   改名后它只会以空数据启动。
 
 ## 日常管理
 
@@ -64,8 +67,11 @@ scripts/deploy/macos.sh uninstall   # 移除 LaunchAgent（保留代码和 data/
 
 - **LaunchAgent 在用户登录后才启动。** Mac mini 当服务器用时，建议在「系统设置 → 用户与群组」开启自动登录，
   并在「系统设置 → 能耗」里关闭自动休眠，否则机器睡眠后服务不可用。
-- **数据位置**：部署后数据在仓库的 `./data`，与桌面版目录相互独立。想回到桌面版时，先
-  `scripts/deploy/macos.sh stop`（或 `uninstall`），再打开桌面版即可（桌面版看到的是迁移前的数据）。
+- **数据位置**：部署后数据在仓库的 `./data`，与桌面版目录相互独立。
+- **切回桌面版**：`scripts/deploy/macos.sh uninstall`，把仓库的 `./data` **复制回**
+  `~/Library/Application Support/@codex-proxy/electron/data`，再打开桌面版。不要直接用迁移前的旧数据——
+  其中的 refresh token 很可能已被轮换失效。**两者不要同时运行**：桌面版发现 8080 被占用会改用随机端口继续运行，
+  两边会同时刷新同一批账号的 token。
 - **桌面版组件不兼容时**：如果桌面版版本与当前代码差异较大，复制来的 TLS 组件可能无法加载，脚本会自动删除它并尝试用 Rust 编译。
 - **通过 nvm / volta 等安装的 Node**：LaunchAgent 记录的是 Node 的绝对路径，切换 Node 版本后请重新执行 `install`。
 - **其它会拉起桌面版的工具**：如果你自己装过「桌面版退出就自动重开」的守护脚本或定时更新桌面版的任务，

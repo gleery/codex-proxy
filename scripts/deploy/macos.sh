@@ -383,6 +383,18 @@ switch_from_desktop_app() {
   ok "Desktop app stopped; port $port is free"
 }
 
+# After a successful switch the desktop copy is stale: the service keeps
+# rotating refresh tokens, so a desktop app reopened on the old copy (login
+# item, a watchdog, an updater) would refresh with superseded tokens and can
+# get the accounts revoked. Move it aside (kept, not deleted) so such a launch
+# starts empty instead.
+retire_desktop_data() {
+  [ -d "$DMG_DATA_DIR" ] || return 0
+  local dest="$DMG_DATA_DIR.migrated-$(date +%Y%m%d-%H%M%S)"
+  mv "$DMG_DATA_DIR" "$dest"
+  ok "Moved the desktop app's (now stale) data aside to $(basename "$dest")"
+}
+
 rollback_to_desktop_app() {
   [ -n "$SWITCHED_FROM_DESKTOP" ] || return 0
   warn "Rolling back: removing the LaunchAgent and reopening $SWITCHED_FROM_DESKTOP"
@@ -521,6 +533,11 @@ cmd_install() {
   if ! wait_healthy; then
     rollback_to_desktop_app
     die "Service failed to become healthy. See $LOG_FILE"
+  fi
+  if [ -n "$SWITCHED_FROM_DESKTOP" ] && [ "$OPT_NO_MIGRATE" != 1 ]; then
+    retire_desktop_data
+    warn "Don't reopen the desktop app while this service runs, and disable anything that"
+    warn "relaunches it (login item, watchdog, updater). To switch back, see scripts/deploy/README.md."
   fi
   print_summary
 }
