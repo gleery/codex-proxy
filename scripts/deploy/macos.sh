@@ -8,6 +8,7 @@
 #
 # Usage: scripts/deploy/macos.sh <command> [options]
 #   install   Build, migrate data, install + start the LaunchAgent
+#             (--switch: take over from a running desktop app once it is idle)
 #   update    git pull --ff-only, rebuild, restart
 #   start | stop | restart | status | logs | uninstall
 #
@@ -25,12 +26,16 @@ DMG_DATA_DIR="${CODEX_PROXY_DESKTOP_DATA_DIR:-$HOME/Library/Application Support/
 DMG_APPS="${CODEX_PROXY_DESKTOP_APPS:-/Applications/Codex Proxy.app:$HOME/Applications/Codex Proxy.app}"
 GUI_DOMAIN="gui/$(id -u)"
 HEALTH_TIMEOUT_S="${CODEX_PROXY_HEALTH_TIMEOUT:-90}"
+IDLE_SECONDS="${CODEX_PROXY_IDLE_SECONDS:-5}"
+IDLE_TIMEOUT_S="${CODEX_PROXY_IDLE_TIMEOUT:-0}"
 
 OPT_LAN=0
 OPT_YES=0
 OPT_NO_MIGRATE=0
 OPT_FORCE_MIGRATE=0
+OPT_SWITCH=0
 NODE_BIN=""
+SWITCHED_FROM_DESKTOP=""
 
 # ── output helpers ──────────────────────────────────────────────────────────
 
@@ -77,11 +82,19 @@ Options (install / update):
   --no-migrate     Do not copy data from the desktop app
   --migrate-data   Re-copy desktop-app data even if ./data exists
                    (the current ./data is backed up first)
+  --switch         (install) If the desktop app is running: build first, wait
+                   until it has no in-flight requests, quit it, copy its latest
+                   data, then start the service. Rolls back to the desktop app
+                   if the new service fails its health check.
   -y, --yes        Answer yes to prompts (e.g. brew install node)
 
 Environment:
   CODEX_PROXY_LAUNCHD_LABEL     LaunchAgent label (default: com.codex-proxy)
   CODEX_PROXY_HEALTH_TIMEOUT    Seconds to wait for /health (default: 90)
+  CODEX_PROXY_IDLE_SECONDS      --switch: idle time required before quitting
+                                the desktop app (default: 5)
+  CODEX_PROXY_IDLE_TIMEOUT      --switch: give up after this many seconds of
+                                waiting for idle; 0 = wait indefinitely
   CODEX_PROXY_DESKTOP_APPS      Colon-separated desktop app paths to take the
                                 TLS addon from (default: /Applications and
                                 ~/Applications "Codex Proxy.app")
@@ -100,8 +113,14 @@ node_version_ok() {
 }
 
 ensure_node() {
-  local candidate
+  local candidate p
   candidate="$(command -v node || true)"
+  if [ -z "$candidate" ]; then
+    # Non-login shells (e.g. ssh host cmd) often miss Homebrew's PATH.
+    for p in /opt/homebrew/bin/node /usr/local/bin/node; do
+      if [ -x "$p" ]; then candidate="$p"; PATH="$(dirname "$p"):$PATH"; break; fi
+    done
+  fi
   if [ -z "$candidate" ] || ! node_version_ok "$candidate"; then
     if [ -n "$candidate" ]; then
       warn "Found Node $("$candidate" -v) at $candidate, but 22.13+ is required."
@@ -125,21 +144,39 @@ ensure_node() {
   ok "Node $("$NODE_BIN" -v) ($NODE_BIN)"
 }
 
+desktop_app_pid() {
+  pgrep -f "Codex Proxy.app/Contents/MacOS/Codex Proxy" 2>/dev/null | head -n 1 || true
+}
+
+# Bundle path of the running desktop app (one of $DMG_APPS), for rollback.
+running_app_path() {
+  local IFS=":" app command
+  command="$(ps -o command= -p "$1" 2>/dev/null || true)"
+  for app in $DMG_APPS; do
+    case "$command" in *"$app/Contents/MacOS/"*) echo "$app"; return 0 ;; esac
+  done
+  for app in $DMG_APPS; do
+    [ -d "$app" ] && { echo "$app"; return 0; }
+  done
+}
+
 check_desktop_app_not_running() {
-  if pgrep -f "Codex Proxy.app/Contents/MacOS/" >/dev/null 2>&1; then
+  if [ -n "$(desktop_app_pid)" ]; then
     die "The Codex Proxy desktop app is running. Quit it (and turn off its login item in
-       System Settings → General → Login Items) so the two don't fight over port and data."
+       System Settings → General → Login Items) so the two don't fight over port and data,
+       or re-run with --switch to take over once it is idle."
   fi
 }
 
-# Merged server config (default.yaml + data/local.yaml + PORT env) as "host port".
+# Merged server config (default.yaml + <data dir>/local.yaml + PORT env) as
+# "host port set|unset". The data dir defaults to ./data.
 read_server_config() {
-  (cd "$REPO_DIR" && "$NODE_BIN" -e '
+  (cd "$REPO_DIR" && CP_LOCAL_YAML="${1:-data}/local.yaml" "$NODE_BIN" -e '
     const fs = require("fs");
     let host = "127.0.0.1", port = 8080, key = null;
     try {
       const yaml = require("js-yaml");
-      for (const f of ["config/default.yaml", "data/local.yaml"]) {
+      for (const f of ["config/default.yaml", process.env.CP_LOCAL_YAML]) {
         if (!fs.existsSync(f)) continue;
         const s = (yaml.load(fs.readFileSync(f, "utf8")) || {}).server || {};
         if (s.host) host = s.host;
@@ -284,6 +321,76 @@ configure_lan() {
   ok "server.host = 0.0.0.0 (data/local.yaml)"
 }
 
+# ── switching over from the desktop app ─────────────────────────────────────
+
+# In-flight account slots reported by a /health URL; empty if unreachable.
+health_used_slots() {
+  curl -fsS --max-time 3 "$1" 2>/dev/null | "$NODE_BIN" -e '
+    let s = ""; process.stdin.on("data", (d) => (s += d)).on("end", () => {
+      try { const n = JSON.parse(s).pool.used_slots; if (Number.isInteger(n)) process.stdout.write(String(n)); } catch {}
+    });' 2>/dev/null || true
+}
+
+wait_for_desktop_idle() {
+  local url="$1" start now idle_since="" used last_report=0
+  step "Waiting for the desktop app to be idle (0 in-flight requests for ${IDLE_SECONDS}s)"
+  start="$(date +%s)"
+  while :; do
+    used="$(health_used_slots "$url")"
+    now="$(date +%s)"
+    if [ "$used" = 0 ]; then
+      [ -n "$idle_since" ] || idle_since="$now"
+      if [ $((now - idle_since)) -ge "$IDLE_SECONDS" ]; then ok "Desktop app is idle"; return 0; fi
+    else
+      idle_since=""
+    fi
+    if [ $((now - last_report)) -ge 30 ]; then
+      if [ -n "$used" ]; then echo "  … $used in-flight request(s), waiting ($(date '+%H:%M:%S'))"
+      else echo "  … $url not answering, waiting ($(date '+%H:%M:%S'))"; fi
+      last_report="$now"
+    fi
+    if [ "$IDLE_TIMEOUT_S" -gt 0 ] && [ $((now - start)) -ge "$IDLE_TIMEOUT_S" ]; then
+      die "The desktop app was still busy after ${IDLE_TIMEOUT_S}s. Nothing was changed; re-run later."
+    fi
+    sleep 1
+  done
+}
+
+# Quit the desktop app at an idle moment. SIGTERM is used on purpose: on macOS
+# its Quit/AppleScript path only hides the window to the tray, while SIGTERM
+# runs the app's graceful shutdown (server close, DB flush).
+switch_from_desktop_app() {
+  local pid cfg host port url app_path i=0
+  pid="$(desktop_app_pid)"
+  [ -n "$pid" ] || return 0
+  app_path="$(running_app_path "$pid")"
+  cfg="$(read_server_config "$DMG_DATA_DIR")"
+  host="${cfg%% *}"; port="$(echo "$cfg" | awk '{print $2}')"
+  case "$host" in 0.0.0.0|::|"") host="127.0.0.1" ;; esac
+  url="http://$host:$port/health"
+  wait_for_desktop_idle "$url"
+  step "Quitting the desktop app (pid $pid)"
+  kill -TERM "$pid" 2>/dev/null || true
+  while kill -0 "$pid" 2>/dev/null && [ $i -lt 40 ]; do sleep 0.5; i=$((i + 1)); done
+  if kill -0 "$pid" 2>/dev/null; then
+    warn "Still running after 20s; forcing it to stop."
+    kill -KILL "$pid" 2>/dev/null || true
+    sleep 1
+  fi
+  i=0
+  while lsof -nP -iTCP:"$port" -sTCP:LISTEN -t >/dev/null 2>&1 && [ $i -lt 20 ]; do sleep 0.5; i=$((i + 1)); done
+  SWITCHED_FROM_DESKTOP="${app_path:-/Applications/Codex Proxy.app}"
+  ok "Desktop app stopped; port $port is free"
+}
+
+rollback_to_desktop_app() {
+  [ -n "$SWITCHED_FROM_DESKTOP" ] || return 0
+  warn "Rolling back: removing the LaunchAgent and reopening $SWITCHED_FROM_DESKTOP"
+  unload_service
+  rm -f "$PLIST"
+  open -a "$SWITCHED_FROM_DESKTOP" 2>/dev/null || warn "Could not reopen it; start it manually."
+}
+
 # ── launchd ─────────────────────────────────────────────────────────────────
 
 xml_escape() {
@@ -395,9 +502,14 @@ cmd_install() {
   require_macos
   step "Preflight"
   ensure_node
-  check_desktop_app_not_running
+  [ "$OPT_SWITCH" = 1 ] || check_desktop_app_not_running
   ensure_native_addon
   build_app
+  if [ "$OPT_SWITCH" = 1 ] && [ -n "$(desktop_app_pid)" ]; then
+    switch_from_desktop_app
+    # The desktop app kept running after any earlier copy, so its data is newer.
+    [ "$OPT_NO_MIGRATE" = 1 ] || OPT_FORCE_MIGRATE=1
+  fi
   migrate_data
   configure_lan
   local cfg port
@@ -406,7 +518,10 @@ cmd_install() {
   write_plist
   step "Starting service"
   load_service
-  wait_healthy || die "Service failed to become healthy. See $LOG_FILE"
+  if ! wait_healthy; then
+    rollback_to_desktop_app
+    die "Service failed to become healthy. See $LOG_FILE"
+  fi
   print_summary
 }
 
@@ -490,6 +605,7 @@ main() {
       --lan) OPT_LAN=1 ;;
       --no-migrate) OPT_NO_MIGRATE=1 ;;
       --migrate-data) OPT_FORCE_MIGRATE=1 ;;
+      --switch) OPT_SWITCH=1 ;;
       -y|--yes) OPT_YES=1 ;;
       -h|--help) usage; exit 0 ;;
       *) die "Unknown option: $1 (see --help)" ;;
