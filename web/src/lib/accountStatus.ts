@@ -10,13 +10,24 @@
  * Keep this helper as the single derivation point so all components agree.
  */
 
-import type { Account, AccountQuota } from "../../../shared/types";
+import type { Account, AccountQuota, AccountQuotaWindow } from "../../../shared/types";
 
-/** True when any of the 3 cachedQuota buckets reports limit_reached. */
+/**
+ * Mirrors the server's `isWindowSpent`: limit_reached, or 100% used before the
+ * window resets (upstream reports a full window on a credit account as allowed).
+ */
+function isWindowSpent(window: AccountQuotaWindow | undefined | null, nowSec: number): boolean {
+  if (!window) return false;
+  if (window.limit_reached === true) return true;
+  return (window.used_percent ?? 0) >= 100 && window.reset_at != null && window.reset_at > nowSec;
+}
+
+/** True when any of the 3 cachedQuota buckets is exhausted. */
 export function isQuotaExhausted(quota: AccountQuota | undefined | null): boolean {
   if (!quota) return false;
-  return quota.rate_limit?.limit_reached === true ||
-    quota.secondary_rate_limit?.limit_reached === true ||
+  const nowSec = Date.now() / 1000;
+  return isWindowSpent(quota.rate_limit, nowSec) ||
+    isWindowSpent(quota.secondary_rate_limit, nowSec) ||
     quota.code_review_rate_limit?.limit_reached === true;
 }
 

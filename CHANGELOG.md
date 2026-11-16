@@ -15,6 +15,7 @@
 
 ### Fixed
 
+- 修复用量已达 100% 的有余额账户状态来回跳变、并可能在未开启开关时消耗余额的问题：上游 `/codex/usage` 会把有 credit 的满额窗口报告为 `allowed` / 未达上限，而响应头又把同一窗口标为已达上限，此前只看 `limit_reached` 导致账户在「已用尽」和「有额度」之间切换。现在主窗口或周窗口用量达到 100% 且尚未到重置时间时也视为用尽：未开启「周额度用尽后使用余额」的账户会被跳过，不会消耗余额；已开启的账户稳定显示「使用余额中」并始终排在有额度账户之后。面板状态判断同步修改（`src/auth/quota-skip.ts`、`web/src/lib/accountStatus.ts`）
 - 修复原生 Codex 生图请求被 400 拒绝的问题：`/v1/images/generations` 的 `quality` 此前只接受 `standard` / `hd`，原生 Codex 发送的 `auto` 和 GPT Image 的 `low` / `medium` / `high` 都会被拒，现在一并接受；generations 与 edits 的 `background` 新增 `transparent`（png / webp 透明背景）。上游映射不变，未知值（如 `quality: "ultra"`、`background: "checkerboard"`）仍在发往上游前返回 400。（`src/routes/shared/image-generation.ts`、`tests/e2e/images.test.ts`）
 
 ## [v2.1.x](https://github.com/icebear0828/codex-proxy/releases?q=2.1) - 2026-09-01 至今

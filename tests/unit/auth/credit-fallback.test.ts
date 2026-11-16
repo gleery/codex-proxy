@@ -15,6 +15,7 @@ import {
   hasUsableCredits,
   isServingFromCredits,
   isWeeklyQuotaExhausted,
+  isWindowSpent,
 } from "@src/auth/quota-skip.js";
 import type { CodexQuota, CodexQuotaCredits } from "@src/auth/types.js";
 
@@ -145,6 +146,85 @@ describe("which exhausted accounts stay usable", () => {
     const entry = pool.getEntry(id)!;
     expect(isServingFromCredits(entry)).toBe(false);
     expect(hasReachedCachedQuota(entry)).toBe(false);
+  });
+});
+
+/**
+ * Upstream `/codex/usage` reports a full window on a credit account as
+ * allowed / not reached (it would bill credits), while response headers mark
+ * it reached. A 100% window must count as spent either way.
+ */
+describe("full window that upstream still reports as allowed", () => {
+  /** Pro-style quota: one weekly primary window at 100%, limit_reached=false. */
+  function fullButAllowed(c: CodexQuotaCredits | null = credits()): CodexQuota {
+    return {
+      plan_type: "pro",
+      rate_limit: {
+        allowed: true,
+        limit_reached: false,
+        used_percent: 100,
+        reset_at: nowSec() + 3 * 24 * HOUR,
+        limit_window_seconds: WEEK,
+      },
+      secondary_rate_limit: null,
+      code_review_rate_limit: null,
+      credits: c,
+    };
+  }
+
+  it("isWindowSpent counts 100% before reset, but not a stale or reset-less 100%", () => {
+    const w = (over: Partial<CodexQuota["rate_limit"]>) => ({ ...fullButAllowed().rate_limit, ...over });
+    expect(isWindowSpent(w({}))).toBe(true);
+    expect(isWindowSpent(w({ reset_at: nowSec() - 60 }))).toBe(false);
+    expect(isWindowSpent(w({ reset_at: null }))).toBe(false);
+    expect(isWindowSpent(w({ used_percent: 99 }))).toBe(false);
+    expect(isWindowSpent(w({ used_percent: 0, limit_reached: true, reset_at: null }))).toBe(true);
+    expect(isWindowSpent(null)).toBe(false);
+  });
+
+  it("treats it as weekly exhaustion (single weekly primary and Plus secondary)", () => {
+    expect(isWeeklyQuotaExhausted(fullButAllowed())).toBe(true);
+    const plus = quota();
+    plus.secondary_rate_limit = { ...plus.secondary_rate_limit!, used_percent: 100, limit_reached: false };
+    expect(isWeeklyQuotaExhausted(plus)).toBe(true);
+  });
+
+  it("skips an account with credits whose toggle is off, so it never spends credits", () => {
+    const pool = makePool();
+    const id = addAccount(pool, fullButAllowed());
+    expect(hasReachedCachedQuota(pool.getEntry(id)!)).toBe(true);
+    expect(pool.acquire()).toBeNull();
+    expect(pool.getAccounts().find((a) => a.id === id)!.creditFallbackActive).toBe(false);
+  });
+
+  it("keeps an opted-in account on credits and behind accounts with plan quota", () => {
+    const pool = makePool();
+    const credit = addAccount(pool, fullButAllowed(), true);
+    const normal = addAccount(pool, quota());
+    expect(pool.getAccounts().find((a) => a.id === credit)!.creditFallbackActive).toBe(true);
+    for (let i = 0; i < 3; i++) {
+      expect(pool.acquire()?.entryId).toBe(normal);
+    }
+  });
+
+  it("does not change state when the account flips between both upstream readings", () => {
+    const pool = makePool();
+    const id = addAccount(pool, fullButAllowed(), true);
+    const reached = fullButAllowed();
+    reached.rate_limit = { ...reached.rate_limit, allowed: false, limit_reached: true };
+    for (const q of [reached, fullButAllowed(), reached]) {
+      pool.updateCachedQuota(id, q);
+      expect(isServingFromCredits(pool.getEntry(id)!)).toBe(true);
+    }
+  });
+
+  it("returns to normal rotation once the window's reset time passes", () => {
+    const pool = makePool();
+    const stale = fullButAllowed();
+    stale.rate_limit = { ...stale.rate_limit, reset_at: nowSec() - 60 };
+    const id = addAccount(pool, stale);
+    expect(hasReachedCachedQuota(pool.getEntry(id)!)).toBe(false);
+    expect(pool.acquire()?.entryId).toBe(id);
   });
 });
 
