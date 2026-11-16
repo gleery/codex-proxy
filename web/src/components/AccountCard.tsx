@@ -34,6 +34,10 @@ const statusStyles: Record<string, [string, string]> = {
     "bg-warning-container text-warning border-warning/30",
     "rateLimited",
   ],
+  credit_fallback: [
+    "bg-emerald-50 text-emerald-600 border-emerald-200 dark:bg-emerald-900/20 dark:text-emerald-400 dark:border-emerald-800/40",
+    "usingCredits",
+  ],
   refreshing: [
     "bg-info-container text-info border-info/30",
     "refreshing",
@@ -88,12 +92,13 @@ interface AccountCardProps {
   onUpdateLabel?: (id: string, label: string | null) => Promise<string | null>;
   onUpdateCodexFingerprintMode?: (id: string, mode: "off" | "session") => Promise<string | null>;
   onUpdateMaxConcurrent?: (id: string, maxConcurrent: number | null) => Promise<string | null>;
+  onUpdateCreditFallback?: (id: string, enabled: boolean) => Promise<string | null>;
   /** Live in-flight snapshot for this account (fresher than `account`). */
   liveActive?: { active: number; max: number };
   onConsumeResetCredit?: (id: string) => Promise<string | null>;
 }
 
-export function AccountCard({ account, index, onDelete, proxies, onProxyChange, selected, onToggleSelect, onRefreshQuota, onToggleStatus, onUpdateLabel, onUpdateCodexFingerprintMode, onUpdateMaxConcurrent, liveActive, onConsumeResetCredit }: AccountCardProps) {
+export function AccountCard({ account, index, onDelete, proxies, onProxyChange, selected, onToggleSelect, onRefreshQuota, onToggleStatus, onUpdateLabel, onUpdateCodexFingerprintMode, onUpdateMaxConcurrent, onUpdateCreditFallback, liveActive, onConsumeResetCredit }: AccountCardProps) {
   const t = useT();
   const { lang } = useI18n();
   const email = account.email || "Unknown";
@@ -189,6 +194,13 @@ export function AccountCard({ account, index, onDelete, proxies, onProxyChange, 
   const showCredits = !!creditsInfo && (creditsInfo.has_credits || creditsInfo.unlimited);
   const creditUsd = showCredits && !creditsInfo!.unlimited
     ? creditsToUsd(creditsInfo!.balance, DEFAULT_CREDITS_PER_USD)
+    : null;
+
+  // Credit fallback toggle: offered on accounts that carry credits, and kept
+  // visible once enabled so it can always be switched off again.
+  const showCreditFallback = !!onUpdateCreditFallback && (showCredits || account.creditFallback === true);
+  const creditFallbackSuspendedAt = account.creditFallback && account.creditFallbackSuspendedUntil
+    ? formatResetTime(account.creditFallbackSuspendedUntil, lang)
     : null;
 
   const [quotaRefreshing, setQuotaRefreshing] = useState(false);
@@ -296,6 +308,26 @@ export function AccountCard({ account, index, onDelete, proxies, onProxyChange, 
       setFingerprintUpdating(false);
     }
   }, [account.id, fingerprintUpdating, onUpdateCodexFingerprintMode, t]);
+
+  const [creditFallbackUpdating, setCreditFallbackUpdating] = useState(false);
+  const handleCreditFallbackChange = useCallback(async (control: HTMLInputElement) => {
+    const enabled = control.checked;
+    if (!onUpdateCreditFallback || creditFallbackUpdating) return;
+    if (enabled && !confirm(t("creditFallbackConfirm"))) {
+      control.checked = false;
+      return;
+    }
+    setCreditFallbackUpdating(true);
+    try {
+      const err = await onUpdateCreditFallback(account.id, enabled);
+      if (err) {
+        control.checked = !enabled;
+        alert(err);
+      }
+    } finally {
+      setCreditFallbackUpdating(false);
+    }
+  }, [account.id, creditFallbackUpdating, onUpdateCreditFallback, t]);
 
   const [maxConcurrentDraft, setMaxConcurrentDraft] = useState<string | null>(null);
   const [maxConcurrentSaving, setMaxConcurrentSaving] = useState(false);
@@ -488,6 +520,31 @@ export function AccountCard({ account, index, onDelete, proxies, onProxyChange, 
             onKeyDown={handleMaxConcurrentKeyDown}
             onBlur={() => void handleMaxConcurrentSave()}
             class="w-20 shrink-0 text-xs px-2 py-1 rounded-md border border-gray-200 dark:border-border-dark bg-white dark:bg-bg-dark text-slate-700 dark:text-text-main focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-40"
+          />
+        </label>
+      )}
+
+      {/* Credit fallback: keep serving from credits once the weekly cap runs out */}
+      {showCreditFallback && (
+        <label class="flex items-center justify-between gap-3 text-[0.78rem] mt-2 pt-2 border-t border-slate-100 dark:border-border-dark">
+          <span class="min-w-0">
+            <span class="block text-slate-500 dark:text-text-dim">{t("creditFallback")}</span>
+            <span
+              data-testid="credit-fallback-hint"
+              class={`block text-[0.65rem] ${creditFallbackSuspendedAt ? "text-amber-600 dark:text-amber-500" : "text-slate-400 dark:text-text-dim/70"}`}
+            >
+              {creditFallbackSuspendedAt
+                ? t("creditFallbackSuspended", { time: creditFallbackSuspendedAt })
+                : t("creditFallbackHint")}
+            </span>
+          </span>
+          <input
+            type="checkbox"
+            aria-label={t("creditFallback")}
+            checked={account.creditFallback === true}
+            disabled={creditFallbackUpdating}
+            onChange={(event) => void handleCreditFallbackChange(event.currentTarget)}
+            class="size-4 shrink-0 rounded border-gray-300 text-primary focus:ring-primary/50 disabled:opacity-40"
           />
         </label>
       )}

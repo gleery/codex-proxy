@@ -206,3 +206,106 @@ describe("AccountCard Rate Limit Reset Credits", () => {
   });
 });
 
+
+describe("AccountCard credit fallback control", () => {
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  function withCredits(overrides: Partial<Account> = {}): Account {
+    return {
+      ...account(),
+      quota: {
+        rate_limit: { used_percent: 100, limit_reached: true, reset_at: null, limit_window_seconds: 18000 },
+        secondary_rate_limit: { used_percent: 100, limit_reached: true, reset_at: null, limit_window_seconds: 604800 },
+        credits: { has_credits: true, unlimited: false, overage_limit_reached: false, balance: 120 },
+      },
+      ...overrides,
+    } as Account;
+  }
+
+  const toggle = () => screen.queryByRole("checkbox", { name: "creditFallback" }) as HTMLInputElement | null;
+
+  it("is hidden for accounts without credits", () => {
+    render(<AccountCard account={account()} index={0} onDelete={vi.fn(async () => null)} onUpdateCreditFallback={vi.fn(async () => null)} />);
+    expect(toggle()).toBeNull();
+  });
+
+  it("stays visible once enabled so it can be switched off", () => {
+    render(
+      <AccountCard
+        account={{ ...account(), creditFallback: true }}
+        index={0}
+        onDelete={vi.fn(async () => null)}
+        onUpdateCreditFallback={vi.fn(async () => null)}
+      />,
+    );
+    expect(toggle()?.checked).toBe(true);
+  });
+
+  it("asks for confirmation before enabling", async () => {
+    const update = vi.fn(async () => null);
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    render(<AccountCard account={withCredits()} index={0} onDelete={vi.fn(async () => null)} onUpdateCreditFallback={update} />);
+
+    fireEvent.click(toggle()!);
+
+    await waitFor(() => expect(update).toHaveBeenCalledWith("account-1", true));
+    expect(confirmSpy).toHaveBeenCalledWith("creditFallbackConfirm");
+  });
+
+  it("does nothing when the confirmation is cancelled", () => {
+    const update = vi.fn(async () => null);
+    vi.spyOn(window, "confirm").mockReturnValue(false);
+    render(<AccountCard account={withCredits()} index={0} onDelete={vi.fn(async () => null)} onUpdateCreditFallback={update} />);
+
+    fireEvent.click(toggle()!);
+
+    expect(toggle()!.checked).toBe(false);
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("switches off without asking", async () => {
+    const update = vi.fn(async () => null);
+    const confirmSpy = vi.spyOn(window, "confirm");
+    render(
+      <AccountCard
+        account={withCredits({ creditFallback: true })}
+        index={0}
+        onDelete={vi.fn(async () => null)}
+        onUpdateCreditFallback={update}
+      />,
+    );
+
+    fireEvent.click(toggle()!);
+
+    await waitFor(() => expect(update).toHaveBeenCalledWith("account-1", false));
+    expect(confirmSpy).not.toHaveBeenCalled();
+  });
+
+  it("shows a 'using credits' badge instead of rate limited while billing credits", () => {
+    render(
+      <AccountCard
+        account={withCredits({ creditFallback: true, creditFallbackActive: true })}
+        index={0}
+        onDelete={vi.fn(async () => null)}
+      />,
+    );
+    expect(screen.getByText("usingCredits")).toBeTruthy();
+    expect(screen.queryByText("rateLimited")).toBeNull();
+  });
+
+  it("explains when fallback is paused after an upstream rejection", () => {
+    render(
+      <AccountCard
+        account={withCredits({ creditFallback: true, creditFallbackSuspendedUntil: Math.floor(Date.now() / 1000) + 600 })}
+        index={0}
+        onDelete={vi.fn(async () => null)}
+        onUpdateCreditFallback={vi.fn(async () => null)}
+      />,
+    );
+    expect(screen.getByTestId("credit-fallback-hint").textContent).toBe("creditFallbackSuspended");
+    expect(screen.getByText("rateLimited")).toBeTruthy();
+  });
+});

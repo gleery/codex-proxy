@@ -81,6 +81,16 @@ export interface AccountEntry {
    * inherit the global `auth.max_concurrent_per_account` setting.
    */
   maxConcurrent?: number | null;
+  /**
+   * Opt-in: keep serving from the account's credit balance once its weekly
+   * window is exhausted, instead of dropping it from rotation. Off by default.
+   */
+  creditFallback?: boolean;
+  /**
+   * Unix seconds until which credit fallback is suspended because upstream
+   * rejected a request on this account (credits ran out, spend cap, ...).
+   */
+  creditFallbackSuspendedUntil?: number | null;
   planType: string | null;
   proxyApiKey: string;
   status: AccountStatus;
@@ -105,6 +115,12 @@ export interface AccountInfo {
   codexFingerprintMode: CodexFingerprintMode;
   /** Per-account concurrency override; null = inherit the global setting. */
   maxConcurrent: number | null;
+  /** Whether credit fallback is enabled for this account. */
+  creditFallback: boolean;
+  /** True while the account is exhausted but still serving from credits. */
+  creditFallbackActive: boolean;
+  /** Unix seconds until which credit fallback is suspended after an upstream rejection. */
+  creditFallbackSuspendedUntil: number | null;
   planType: string | null;
   status: AccountStatus;
   usage: AccountUsage;

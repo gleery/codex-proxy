@@ -658,6 +658,19 @@ function normalizeAccountEntries(rawEntries: unknown[]): {
         needsPersist = true;
       }
     }
+    // Credit fallback is explicit opt-in: anything but `true` means off.
+    if (entry.creditFallback !== true && entry.creditFallback !== false) {
+      entry.creditFallback = false;
+      needsPersist = true;
+    }
+    {
+      const until = entry.creditFallbackSuspendedUntil;
+      const normalizedUntil = typeof until === "number" && Number.isFinite(until) ? until : null;
+      if (until !== normalizedUntil) {
+        entry.creditFallbackSuspendedUntil = normalizedUntil;
+        needsPersist = true;
+      }
+    }
     // Backfill cachedQuota fields
     if (entry.cachedQuota === undefined) {
       entry.cachedQuota = null;
@@ -715,6 +728,8 @@ function migrateFromLegacy(): AccountEntry[] {
       label: null,
       codexFingerprintMode: "off",
       maxConcurrent: null,
+      creditFallback: false,
+      creditFallbackSuspendedUntil: null,
       planType: data.userInfo?.planType ?? null,
       proxyApiKey: data.proxyApiKey ?? "codex-proxy-" + randomBytes(24).toString("hex"),
       status: isTokenExpired(data.token) ? "expired" : "active",

@@ -184,6 +184,12 @@ export function handleCodexApiError(
   if (err.status === 429) {
     const retryAfterSec = extractRetryAfterSec(err.body);
     const limitId = getRateLimitIdForModel(model);
+    // If this account was billing credits past its weekly cap, upstream just
+    // refused that too — stop routing to it until the retry hint passes.
+    // Must run before the 429 is applied so the account is excluded at once.
+    if (pool.suspendCreditFallback(entryId, retryAfterSec)) {
+      console.warn(`[${tag}] Account ${entryId} (${email}) | credit fallback suspended after 429`);
+    }
     if (limitId) {
       pool.applyAdditionalRateLimit429(entryId, limitId, { retryAfterSec, countRequest: true });
     } else {

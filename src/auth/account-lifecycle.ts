@@ -8,7 +8,7 @@
 import { getServiceTierAccountRule } from "./service-tier-routing.js";
 import { getConfig } from "../config.js";
 import { getModelPlanTypes, isPlanFetched } from "../models/model-store.js";
-import { hasReachedCachedQuota } from "./quota-skip.js";
+import { hasReachedCachedQuota, isServingFromCredits } from "./quota-skip.js";
 import { getRotationStrategy } from "./rotation-strategy.js";
 import type { RotationStrategy, RotationState, RotationStrategyName } from "./rotation-strategy.js";
 import type { AccountRegistry } from "./account-registry.js";
@@ -144,6 +144,11 @@ export class AccountLifecycle {
         return null;
       }
     }
+
+    // Credit fallback is a last resort: bill credits only when no account with
+    // remaining plan quota can take this request.
+    const onPlanQuota = candidates.filter((a) => !isServingFromCredits(a, options?.model));
+    if (onPlanQuota.length > 0) candidates = onPlanQuota;
 
     // Tier-based filtering: when configured, restrict to the highest available tier
     const tierPriority = config.auth.tier_priority;

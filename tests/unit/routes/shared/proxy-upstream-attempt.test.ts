@@ -43,6 +43,7 @@ function makeAccountPool(): RateLimitAccountPool {
     updateCachedQuota: vi.fn(),
     syncRateLimitWindow: vi.fn(),
     applyRateLimit429: vi.fn(),
+    suspendCreditFallback: vi.fn().mockReturnValue(false),
   };
 }
 
