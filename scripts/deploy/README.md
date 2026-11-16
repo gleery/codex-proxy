@@ -68,7 +68,9 @@ scripts/deploy/macos.sh uninstall   # 移除 LaunchAgent（保留代码和 data/
   直到执行 `start` 或下次登录；不想再开机自启就用 `uninstall`（之后重新 `install` 即可恢复，数据不受影响）。
 - `stop` / `restart` / `update` 会中断进行中的请求，客户端需要重试。
 - 在其它电脑上可通过 SSH 执行，例如 `ssh 用户名@服务器地址 '~/codex-proxy/scripts/deploy/macos.sh restart'`。
-- `update` 要求工作区没有未提交的改动（只改了文件权限的不算，例如 `npm ci` 给 bin 脚本加的可执行位）。
+- `update` 会保留本地改动：服务升级客户端版本号时会改写 `config/default.yaml`，只要新提交没改到同一个文件，
+  `update` 就会照常拉取并提示「Keeping local changes」。新提交改到了本地改过的文件时 git 会拒绝拉取，
+  需要先提交或暂存那个文件再重试。只改了文件权限的不算改动（例如 `npm ci` 给 bin 脚本加的可执行位）。
 
 ## 注意事项
 

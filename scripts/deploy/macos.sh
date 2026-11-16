@@ -556,18 +556,30 @@ cmd_install() {
   print_summary
 }
 
+# Fast-forward the checkout, keeping local edits the incoming commits don't
+# touch. The running service rewrites config/default.yaml when it bumps the
+# client version, so a deployed checkout is routinely "dirty"; that must
+# neither block an update nor be thrown away. git itself refuses the pull if an
+# incoming change would overwrite a local edit.
+# Permission-only changes are ignored: `npm ci` marks workspace bin scripts
+# executable, which would otherwise show up as local edits.
+pull_latest() {
+  (cd "$REPO_DIR" && {
+    local changed
+    changed="$(git -c core.fileMode=false diff --name-only HEAD)"
+    if [ -n "$changed" ]; then
+      warn "Keeping local changes: $(printf '%s' "$changed" | tr '\n' ' ')"
+    fi
+    git -c core.fileMode=false pull --ff-only ||
+      die "git pull failed. If an incoming commit changes a file you edited locally, commit or stash that file, then re-run update."
+  })
+}
+
 cmd_update() {
   require_macos
   ensure_node
   step "Pulling latest code"
-  # Ignore permission-only changes: `npm ci` marks workspace bin scripts
-  # executable, which would otherwise make every deployed checkout "dirty".
-  (cd "$REPO_DIR" && {
-    if ! git -c core.fileMode=false diff --quiet || ! git -c core.fileMode=false diff --cached --quiet; then
-      die "The checkout has local changes; commit or stash them first."
-    fi
-    git -c core.fileMode=false pull --ff-only
-  })
+  pull_latest
   ensure_native_addon
   build_app
   configure_lan
@@ -671,4 +683,7 @@ main() {
   esac
 }
 
-main "$@"
+# Run only when executed, so tests can source the functions.
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  main "$@"
+fi
