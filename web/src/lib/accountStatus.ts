@@ -24,9 +24,13 @@ export function isQuotaExhausted(quota: AccountQuota | undefined | null): boolea
  * Effective status: cachedQuota wins over backend status when any bucket
  * limit is reached. Returns the string the existing `statusStyles` map keys
  * on (active, expired, quota_exhausted, refreshing, disabled, banned,
- * rate_limited).
+ * rate_limited, credit_fallback).
  */
 export function derivedStatus(account: Account): string {
+  // Exhausted but opted in to keep serving from its credit balance.
+  if (account.status === "active" && account.creditFallbackActive === true) {
+    return "credit_fallback";
+  }
   if (account.status === "active" && isQuotaExhausted(account.quota)) {
     return "rate_limited";
   }

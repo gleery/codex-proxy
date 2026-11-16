@@ -10,6 +10,7 @@
 
 ### Added
 
+- 账户级「周额度用尽后使用余额」开关（默认关闭）：开启后，账户周额度用尽但 credit 余额 > 0（或不限量）时继续参与轮换，消耗余额而不是被跳过；仅 5 小时窗口用尽不会触发。仍有额度的账户始终优先，只有它们都不可用（额度用尽或并发已满）时才使用余额。上游拒绝（429）后按其给出的重试时间暂停（无提示时 30 分钟），重新打开开关可立即恢复。面板账户卡片新增开关（开启前二次确认）和「使用余额中」状态；接口为 `PATCH /auth/accounts/:id/credit-fallback`。（`src/auth/quota-skip.ts`、`src/auth/account-lifecycle.ts`、`src/auth/account-pool.ts`、`src/routes/shared/proxy-error-handler.ts`、`web/src/components/AccountCard.tsx`）
 - macOS 常驻部署脚本：`scripts/deploy/macos.sh install` 一条命令把源码检出构建并注册为 launchd LaunchAgent（登录自启、崩溃自动拉起），另有 `update` / `start` / `stop` / `restart` / `status` / `logs` / `uninstall`。可直接复用桌面版（DMG）的 TLS 原生组件（无需 Rust），并**复制**（不移动）桌面版的账号、Key 和设置；`--lan` 开放局域网访问（未设 API 密钥时需确认）；`CODEX_PROXY_NODE` 可指定 Node，并检查该 Node 能否正常发起 HTTPS 请求。`install --switch` 可从正在服务的桌面版接管：先完成构建，等 `pool.used_slots` 连续为 0 才停止桌面版并复制数据（避免拿到已被轮换的 refresh token）；健康检查失败自动回滚并重新打开桌面版，成功后把桌面版数据目录改名为 `data.migrated-<时间>`，防止它被再次打开时用旧 token 刷新。（`scripts/deploy/macos.sh`、`scripts/deploy/README.md`、`README.md`）
 
 ### Fixed

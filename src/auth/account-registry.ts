@@ -22,7 +22,7 @@ import type {
   CodexFingerprintMode,
   CodexQuota,
 } from "./types.js";
-import { hasReachedCachedQuota } from "./quota-skip.js";
+import { hasReachedCachedQuota, isServingFromCredits } from "./quota-skip.js";
 import { isCfChallengeCooldownActive } from "./cf-challenge-cooldown.js";
 
 import { safeEqual } from "./safe-equal.js";
@@ -51,6 +51,12 @@ function resetExpiredQuotaWindow(
   quotaWindow.limit_reached = false;
   quotaWindow.reset_at = nextResetAt(resetAt, quotaWindow.limit_window_seconds, nowSec);
   return true;
+}
+
+/** The credit fallback suspension deadline while it is still in the future, else null. */
+function activeSuspension(entry: AccountEntry): number | null {
+  const until = entry.creditFallbackSuspendedUntil;
+  return typeof until === "number" && until > Date.now() / 1000 ? until : null;
 }
 
 export class AccountRegistry {
@@ -158,6 +164,8 @@ export class AccountRegistry {
       label: null,
       codexFingerprintMode: "off",
       maxConcurrent: null,
+      creditFallback: false,
+      creditFallbackSuspendedUntil: null,
       planType,
       proxyApiKey: "codex-proxy-" + randomBytes(24).toString("hex"),
       status: isTokenExpired(token) ? "expired" : "active",
@@ -243,6 +251,31 @@ export class AccountRegistry {
     const entry = this.accounts.get(entryId);
     if (!entry) return false;
     entry.maxConcurrent = maxConcurrent;
+    this.schedulePersist();
+    return true;
+  }
+
+  /**
+   * Opt the account in/out of serving from its credit balance once the weekly
+   * window is exhausted. Clears any suspension so a re-enable retries at once.
+   */
+  setCreditFallback(entryId: string, enabled: boolean): boolean {
+    const entry = this.accounts.get(entryId);
+    if (!entry) return false;
+    entry.creditFallback = enabled;
+    entry.creditFallbackSuspendedUntil = null;
+    this.schedulePersist();
+    return true;
+  }
+
+  /**
+   * Upstream rejected a request on this account: stop billing its credits
+   * until `untilSec`. No-op (returns false) when credit fallback is off.
+   */
+  suspendCreditFallback(entryId: string, untilSec: number): boolean {
+    const entry = this.accounts.get(entryId);
+    if (!entry || entry.creditFallback !== true) return false;
+    entry.creditFallbackSuspendedUntil = Math.max(entry.creditFallbackSuspendedUntil ?? 0, untilSec);
     this.schedulePersist();
     return true;
   }
@@ -744,6 +777,9 @@ export class AccountRegistry {
       label: entry.label,
       codexFingerprintMode: entry.codexFingerprintMode === "session" ? "session" : "off",
       maxConcurrent: normalizeMaxConcurrent(entry.maxConcurrent),
+      creditFallback: entry.creditFallback === true,
+      creditFallbackActive: isServingFromCredits(entry),
+      creditFallbackSuspendedUntil: activeSuspension(entry),
       planType: entry.planType,
       status: entry.status,
       usage: { ...entry.usage },

@@ -276,6 +276,24 @@ describe("SQLite account persistence", () => {
     expect(sqliteReload.entries.map((entry) => entry.maxConcurrent)).toEqual([null, null, null, 4]);
   });
 
+  it("normalizes and round-trips per-account credit fallback", async () => {
+    const entries = [
+      makeEntry("credit-missing"),
+      { ...makeEntry("credit-invalid"), creditFallback: "yes", creditFallbackSuspendedUntil: "soon" },
+      { ...makeEntry("credit-on"), creditFallback: true, creditFallbackSuspendedUntil: 1_767_300_000 },
+    ];
+    writeFileSync(accountsJsonPath(), JSON.stringify({ accounts: entries }, null, 2), "utf-8");
+
+    const { createFsPersistence } = await freshModule();
+    const pick = (list: AccountEntry[]) =>
+      list.map((entry) => [entry.creditFallback, entry.creditFallbackSuspendedUntil]);
+    const expected = [[false, null], [false, null], [true, 1_767_300_000]];
+    expect(pick(createFsPersistence().load().entries)).toEqual(expected);
+
+    rmSync(accountsJsonPath());
+    expect(pick(createFsPersistence().load().entries)).toEqual(expected);
+  });
+
   it("reads refresh tokens from SQLite before a stale JSON mirror", async () => {
     const entry = makeEntry("rt-source", "rt-json-original");
     writeAccountsJson([entry]);

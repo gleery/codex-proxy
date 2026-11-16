@@ -596,6 +596,29 @@ export function useAccounts() {
     }
   }, [patchLocal, loadAccounts]);
 
+  const updateCreditFallback = useCallback(async (
+    id: string,
+    enabled: boolean,
+  ): Promise<string | null> => {
+    try {
+      const resp = await fetch(`/auth/accounts/${encodeURIComponent(id)}/credit-fallback`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled }),
+      });
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}));
+        return data.error || "Failed to update credit fallback";
+      }
+      patchLocal(id, { creditFallback: enabled, creditFallbackSuspendedUntil: null });
+      // Whether the account is now serving from credits is decided server-side.
+      void loadAccounts();
+      return null;
+    } catch (err) {
+      return "networkError" + (err instanceof Error ? err.message : "");
+    }
+  }, [patchLocal, loadAccounts]);
+
   return {
     list,
     loading,
@@ -634,5 +657,6 @@ export function useAccounts() {
     updateLabel,
     updateCodexFingerprintMode,
     updateMaxConcurrent,
+    updateCreditFallback,
   };
 }

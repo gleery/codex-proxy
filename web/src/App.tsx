@@ -239,6 +239,7 @@ function Dashboard() {
                 onUpdateLabel={accounts.updateLabel}
                 onUpdateCodexFingerprintMode={accounts.updateCodexFingerprintMode}
                 onUpdateMaxConcurrent={accounts.updateMaxConcurrent}
+                onUpdateCreditFallback={accounts.updateCreditFallback}
                 liveConcurrency={liveConcurrency}
                 fallbackUpstream={accounts.fallbackUpstream}
                 fallbackActive={accounts.fallbackActive}

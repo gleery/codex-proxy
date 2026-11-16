@@ -32,7 +32,8 @@ export function computePoolStats(accounts: Account[], creditsPerUsd = DEFAULT_CR
 
   for (const account of accounts) {
     const status = derivedStatus(account);
-    if (status === "active") active += 1;
+    // Accounts billing credits past their weekly cap are still serving.
+    if (status === "active" || status === "credit_fallback") active += 1;
     if (status === "quota_exhausted" || status === "rate_limited") exhausted += 1;
 
     const credits = account.quota?.credits;

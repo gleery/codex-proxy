@@ -44,6 +44,7 @@ const CodexFingerprintSchema = z.object({ mode: z.enum(["off", "session"]) });
 const MaxConcurrentSchema = z.object({
   max_concurrent: z.number().int().min(1).max(MAX_ACCOUNT_CONCURRENCY_OVERRIDE).nullable(),
 });
+const CreditFallbackSchema = z.object({ enabled: z.boolean() });
 export function createAccountRoutes(pool: AccountPool, scheduler: RefreshScheduler, cookieJar?: CookieJar, proxyPool?: ProxyPool, fallbackUpstream?: FallbackUpstreamStore): Hono {
   const app = new Hono();
   const importSvc = new AccountImportService(pool, scheduler, {
@@ -199,6 +200,19 @@ export function createAccountRoutes(pool: AccountPool, scheduler: RefreshSchedul
       return c.json({ error: "Account not found" });
     }
     return c.json({ success: true, max_concurrent: parsed.data.max_concurrent });
+  });
+
+  // Per-account opt-in: once the weekly window is exhausted, keep serving from
+  // the account's credit balance instead of dropping it from rotation.
+  app.patch("/auth/accounts/:id/credit-fallback", async (c) => {
+    const body = await c.req.json().catch(() => null);
+    const parsed = CreditFallbackSchema.safeParse(body);
+    if (!parsed.success) { c.status(400); return c.json({ error: "Invalid request", details: parsed.error.issues }); }
+    if (!pool.setCreditFallback(c.req.param("id"), parsed.data.enabled)) {
+      c.status(404);
+      return c.json({ error: "Account not found" });
+    }
+    return c.json({ success: true, enabled: parsed.data.enabled });
   });
 
   app.get("/auth/accounts", (c) => {

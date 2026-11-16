@@ -173,6 +173,7 @@ function createMockAccountPool(overrides: Record<string, unknown> = {}) {
     release: vi.fn(),
     markRateLimited: vi.fn(),
     applyRateLimit429: vi.fn(),
+    suspendCreditFallback: vi.fn().mockReturnValue(false),
     updateCachedQuota: vi.fn(),
     syncRateLimitWindow: vi.fn(),
     markStatus: vi.fn(),

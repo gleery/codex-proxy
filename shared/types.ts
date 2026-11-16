@@ -50,6 +50,12 @@ export interface Account {
   effectiveMaxConcurrent?: number;
   /** Requests currently in flight on this account. */
   activeRequests?: number;
+  /** Opt-in: keep serving from credits once the weekly window is exhausted. */
+  creditFallback?: boolean;
+  /** True while the account is exhausted but still serving from credits. */
+  creditFallbackActive?: boolean;
+  /** Unix seconds until which credit fallback is paused after an upstream rejection. */
+  creditFallbackSuspendedUntil?: number | null;
   status: string;
   planType?: string;
   usage?: {

@@ -65,6 +65,7 @@ function createMockPool() {
   return {
     markStatus: vi.fn(),
     applyRateLimit429: vi.fn(),
+    suspendCreditFallback: vi.fn().mockReturnValue(false),
     applyAdditionalRateLimit429: vi.fn(),
     markRateLimited: vi.fn(),
     getEntry: vi.fn().mockReturnValue({ email: "test@example.com" }),

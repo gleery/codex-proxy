@@ -34,6 +34,7 @@ interface AccountListProps {
   onUpdateLabel?: (id: string, label: string | null) => Promise<string | null>;
   onUpdateCodexFingerprintMode?: (id: string, mode: "off" | "session") => Promise<string | null>;
   onUpdateMaxConcurrent?: (id: string, maxConcurrent: number | null) => Promise<string | null>;
+  onUpdateCreditFallback?: (id: string, enabled: boolean) => Promise<string | null>;
   /** Live in-flight counts; overrides the (30s-polled) values on each card. */
   liveConcurrency?: LiveConcurrency | null;
   fallbackUpstream?: FallbackUpstreamPublic | null;
@@ -53,7 +54,7 @@ function getBrowserStorage(): Storage | null {
   }
 }
 
-export function AccountList({ accounts, antigravityAccounts = [], onAddAntigravity, onDeleteAntigravity, onToggleAntigravityStatus, loading, onDelete, onRefresh, refreshing, lastUpdated, proxies, onProxyChange, onExport, onImport, onToggleStatus, onUpdateLabel, onUpdateCodexFingerprintMode, onUpdateMaxConcurrent, liveConcurrency, fallbackUpstream, onUpdateFallbackUpstream, onDeleteFallbackUpstream, fallbackActive = false }: AccountListProps) {
+export function AccountList({ accounts, antigravityAccounts = [], onAddAntigravity, onDeleteAntigravity, onToggleAntigravityStatus, loading, onDelete, onRefresh, refreshing, lastUpdated, proxies, onProxyChange, onExport, onImport, onToggleStatus, onUpdateLabel, onUpdateCodexFingerprintMode, onUpdateMaxConcurrent, onUpdateCreditFallback, liveConcurrency, fallbackUpstream, onUpdateFallbackUpstream, onDeleteFallbackUpstream, fallbackActive = false }: AccountListProps) {
   const t = useT();
   const { lang } = useI18n();
   const liveById = useMemo(
@@ -325,6 +326,7 @@ export function AccountList({ accounts, antigravityAccounts = [], onAddAntigravi
           {statusCounts.expired ? <option value="expired">{t("filterExpired")} ({statusCounts.expired})</option> : null}
           {statusCounts.banned ? <option value="banned">{t("filterBanned")} ({statusCounts.banned})</option> : null}
           {statusCounts.rate_limited ? <option value="rate_limited">{t("filterRateLimited")} ({statusCounts.rate_limited})</option> : null}
+          {statusCounts.credit_fallback ? <option value="credit_fallback">{t("usingCredits")} ({statusCounts.credit_fallback})</option> : null}
           {statusCounts.disabled ? <option value="disabled">{t("filterDisabled")} ({statusCounts.disabled})</option> : null}
         </select>
         {/* Refresh expired tokens */}
@@ -442,7 +444,7 @@ export function AccountList({ accounts, antigravityAccounts = [], onAddAntigravi
                 console.warn(`[AccountList] Failed to refresh quota for account ${id}: ${resp.status}`);
               }
               onRefresh();
-            }} onToggleStatus={onToggleStatus} onUpdateLabel={onUpdateLabel} onUpdateCodexFingerprintMode={onUpdateCodexFingerprintMode} onUpdateMaxConcurrent={onUpdateMaxConcurrent} liveActive={liveById.get(acct.id)} />
+            }} onToggleStatus={onToggleStatus} onUpdateLabel={onUpdateLabel} onUpdateCodexFingerprintMode={onUpdateCodexFingerprintMode} onUpdateMaxConcurrent={onUpdateMaxConcurrent} onUpdateCreditFallback={onUpdateCreditFallback} liveActive={liveById.get(acct.id)} />
           ))
         )}
         {onAddAntigravity && onDeleteAntigravity && onToggleAntigravityStatus && (

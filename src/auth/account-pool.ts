@@ -10,6 +10,7 @@ import { getConfig } from "../config.js";
 import { createFsPersistence } from "./account-persistence.js";
 import { AccountRegistry } from "./account-registry.js";
 import { AccountLifecycle } from "./account-lifecycle.js";
+import { isServingFromCredits } from "./quota-skip.js";
 import type { AccountPersistence, PersistenceLoadHealth } from "./account-persistence.js";
 import type { AccountCapacitySummary, AccountConcurrencySnapshot } from "./account-lifecycle.js";
 import type { CodexTokenMetadata } from "./token-metadata.js";
@@ -21,6 +22,13 @@ import type {
   CodexFingerprintMode,
   CodexQuota,
 } from "./types.js";
+
+/**
+ * How long credit fallback stays off after upstream rejects an account without
+ * saying when to retry. Matches the active quota refresher's per-account gap,
+ * so a fresh credit balance is usually known by the time it lifts.
+ */
+export const CREDIT_FALLBACK_SUSPEND_SECONDS = 30 * 60;
 
 export interface PersistenceHealth {
   ok: boolean;
@@ -197,6 +205,11 @@ export class AccountPool {
     return this.registry.setMaxConcurrent(entryId, maxConcurrent);
   }
 
+  /** Opt an account in/out of serving from credits once its weekly window is exhausted. */
+  setCreditFallback(entryId: string, enabled: boolean): boolean {
+    return this.registry.setCreditFallback(entryId, enabled);
+  }
+
   /** Live per-account concurrency (in-flight vs. effective cap). */
   getConcurrencySnapshot(): AccountConcurrencySnapshot[] {
     return this.lifecycle.getConcurrencySnapshot();
@@ -239,9 +252,24 @@ export class AccountPool {
     options?: { retryAfterSec?: number; resetsAtSec?: number; countRequest?: boolean },
   ): void {
     if (this.registry.applyRateLimit429(entryId, this.rateLimitBackoffSeconds, options)) {
+      // An account billing its credits stays in rotation even though its
+      // windows read 100% (every successful response's headers say so), so
+      // keep its in-flight slots and pooled connections.
+      const entry = this.registry.getEntry(entryId);
+      if (entry && isServingFromCredits(entry)) return;
       this.lifecycle.clearLock(entryId);
       this.evictWsPool(entryId);
     }
+  }
+
+  /**
+   * Upstream refused a request on an account with credit fallback enabled
+   * (credits ran out, spend cap reached, ...): stop billing it until upstream's
+   * retry hint, or {@link CREDIT_FALLBACK_SUSPEND_SECONDS} when none was given.
+   */
+  suspendCreditFallback(entryId: string, retryAfterSec?: number): boolean {
+    const seconds = retryAfterSec != null && retryAfterSec > 0 ? retryAfterSec : CREDIT_FALLBACK_SUSPEND_SECONDS;
+    return this.registry.suspendCreditFallback(entryId, Date.now() / 1000 + seconds);
   }
 
   applyAdditionalRateLimit429(

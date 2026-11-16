@@ -12,6 +12,7 @@ interface MockPool {
   markRateLimited: ReturnType<typeof vi.fn>;
   applyRateLimit429: ReturnType<typeof vi.fn>;
   applyAdditionalRateLimit429: ReturnType<typeof vi.fn>;
+  suspendCreditFallback: ReturnType<typeof vi.fn>;
   markStatus: ReturnType<typeof vi.fn>;
   getEntry: ReturnType<typeof vi.fn>;
   acquire: ReturnType<typeof vi.fn>;
@@ -21,6 +22,7 @@ function createMockPool(): MockPool {
   return {
     markRateLimited: vi.fn(),
     applyRateLimit429: vi.fn(),
+    suspendCreditFallback: vi.fn().mockReturnValue(false),
     applyAdditionalRateLimit429: vi.fn(),
     markStatus: vi.fn(),
     getEntry: vi.fn().mockReturnValue({ email: "test@example.com" }),
@@ -105,6 +107,16 @@ describe("handleCodexApiError", () => {
         retryAfterSec: undefined,
         countRequest: true,
       });
+    });
+
+    it("suspends credit fallback with upstream's retry hint before applying the 429", () => {
+      const err = new CodexApiError(429, JSON.stringify({ error: { resets_in_seconds: 7200 } }));
+
+      handleCodexApiError(err, pool as never, entryId, model, tag, false);
+
+      expect(pool.suspendCreditFallback).toHaveBeenCalledWith(entryId, 7200);
+      expect(pool.suspendCreditFallback.mock.invocationCallOrder[0])
+        .toBeLessThan(pool.applyRateLimit429.mock.invocationCallOrder[0]);
     });
 
     it("records Spark 429 in its additional quota bucket", () => {
