@@ -228,6 +228,69 @@ describe("full window that upstream still reports as allowed", () => {
   });
 });
 
+/**
+ * Upstream can report an empty secondary window (0% used, no length, no reset)
+ * next to a Pro account's spent weekly primary — seen live on a Pro account.
+ */
+describe("empty secondary window next to a spent weekly primary", () => {
+  function proWithEmptySecondary(): CodexQuota {
+    return {
+      plan_type: "pro",
+      rate_limit: {
+        allowed: false,
+        limit_reached: true,
+        used_percent: 100,
+        reset_at: nowSec() + 25 * HOUR,
+        limit_window_seconds: WEEK,
+      },
+      secondary_rate_limit: {
+        used_percent: 0,
+        remaining_percent: 100,
+        reset_at: null,
+        limit_window_seconds: null,
+        limit_reached: false,
+      },
+      code_review_rate_limit: null,
+      credits: credits(),
+    };
+  }
+
+  it("still counts as weekly exhaustion", () => {
+    expect(isWeeklyQuotaExhausted(proWithEmptySecondary())).toBe(true);
+  });
+
+  it("keeps an opted-in account serving from credits and taking overflow", () => {
+    setConfigForTesting(createMockConfig({ auth: { max_concurrent_per_account: 1 } }));
+    const pool = makePool();
+    const credit = addAccount(pool, proWithEmptySecondary(), true);
+    const normal = addAccount(pool, quota());
+    expect(pool.getAccounts().find((a) => a.id === credit)!.creditFallbackActive).toBe(true);
+    expect(pool.acquire()?.entryId).toBe(normal);
+    expect(pool.acquire()?.entryId).toBe(credit);
+  });
+
+  it("still skips the account when the toggle is off", () => {
+    const pool = makePool();
+    const id = addAccount(pool, proWithEmptySecondary());
+    expect(hasReachedCachedQuota(pool.getEntry(id)!)).toBe(true);
+  });
+
+  it("judges a spent secondary window by its length", () => {
+    const withSecondary = (limit_window_seconds: number | null): CodexQuota => ({
+      ...quota(),
+      secondary_rate_limit: {
+        used_percent: 100,
+        reset_at: nowSec() + HOUR,
+        limit_window_seconds,
+        limit_reached: true,
+      },
+    });
+    expect(isWeeklyQuotaExhausted(withSecondary(WEEK))).toBe(true);
+    expect(isWeeklyQuotaExhausted(withSecondary(null))).toBe(true);
+    expect(isWeeklyQuotaExhausted(withSecondary(5 * HOUR))).toBe(false);
+  });
+});
+
 describe("acquire", () => {
   it("prefers accounts with plan quota over billing credits", () => {
     const pool = makePool();

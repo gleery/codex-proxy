@@ -50,18 +50,28 @@ export function isQuotaExhausted(
 }
 
 /**
- * True when the weekly cap is exhausted: the secondary window, or — for plans
- * that only report one window — a primary window of a day or longer.
- * A short (5-hour) primary window running out on its own does not count.
+ * True when the weekly cap is exhausted: a spent window of a day or longer —
+ * the primary window on plans whose primary is the weekly cap (Pro), or the
+ * secondary window (Plus). A secondary window with an unknown length counts as
+ * weekly; a short (5-hour) primary window running out on its own does not.
+ *
+ * Decided per window rather than "secondary if present": upstream can report
+ * an empty secondary window (0% used, no length, no reset) next to a spent
+ * weekly primary, which must not hide the exhausted weekly cap.
  */
 export function isWeeklyQuotaExhausted(
   quota: CodexQuota | null | undefined,
   nowSec: number = Date.now() / 1000,
 ): boolean {
   if (!quota) return false;
-  if (quota.secondary_rate_limit) return isWindowSpent(quota.secondary_rate_limit, nowSec);
-  return isWindowSpent(quota.rate_limit, nowSec) &&
-    (quota.rate_limit.limit_window_seconds ?? 0) >= LONG_WINDOW_SECONDS;
+  const primary = quota.rate_limit;
+  if (isWindowSpent(primary, nowSec) && (primary.limit_window_seconds ?? 0) >= LONG_WINDOW_SECONDS) {
+    return true;
+  }
+  const secondary = quota.secondary_rate_limit;
+  return secondary != null &&
+    isWindowSpent(secondary, nowSec) &&
+    (secondary.limit_window_seconds == null || secondary.limit_window_seconds >= LONG_WINDOW_SECONDS);
 }
 
 /** True when the account has a credit balance upstream can bill against. */

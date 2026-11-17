@@ -15,6 +15,7 @@
 
 ### Fixed
 
+- 修复 Pro 账户周额度用尽后「使用余额」不生效、并发跑满时也不分流的问题：上游有时会在 Pro 账户上附带一个空的次级窗口（用量 0%、无周期、无重置时间），此前只要存在次级窗口就只看它来判断周额度，导致已用尽的 7 天主窗口被忽略，账户被当作普通限速账户整体跳过。现在按窗口周期判断：周期 ≥ 1 天的主窗口或次级窗口用尽即视为周额度用尽（`src/auth/quota-skip.ts`）
 - 修复 macOS 部署脚本 `update` 被服务自动改写的配置拦住的问题：服务升级客户端版本号时会改写 `config/default.yaml`，此前 `update` 只要发现本地改动就拒绝执行。现在由 `git pull --ff-only` 判断，新提交没改到的本地改动会保留并提示，只有新提交要覆盖本地改动时才停止（`scripts/deploy/macos.sh`、`scripts/deploy/README.md`）
 - 修复用量已达 100% 的有余额账户状态来回跳变、并可能在未开启开关时消耗余额的问题：上游 `/codex/usage` 会把有 credit 的满额窗口报告为 `allowed` / 未达上限，而响应头又把同一窗口标为已达上限，此前只看 `limit_reached` 导致账户在「已用尽」和「有额度」之间切换。现在主窗口或周窗口用量达到 100% 且尚未到重置时间时也视为用尽：未开启「周额度用尽后使用余额」的账户会被跳过，不会消耗余额；已开启的账户稳定显示「使用余额中」并始终排在有额度账户之后。面板状态判断同步修改（`src/auth/quota-skip.ts`、`web/src/lib/accountStatus.ts`）
 - 修复原生 Codex 生图请求被 400 拒绝的问题：`/v1/images/generations` 的 `quality` 此前只接受 `standard` / `hd`，原生 Codex 发送的 `auto` 和 GPT Image 的 `low` / `medium` / `high` 都会被拒，现在一并接受；generations 与 edits 的 `background` 新增 `transparent`（png / webp 透明背景）。上游映射不变，未知值（如 `quality: "ultra"`、`background: "checkerboard"`）仍在发往上游前返回 400。（`src/routes/shared/image-generation.ts`、`tests/e2e/images.test.ts`）
