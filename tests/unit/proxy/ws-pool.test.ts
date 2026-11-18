@@ -19,6 +19,8 @@ class MockWs extends EventEmitter implements WsLike {
   public closeCode: number | undefined;
   public closeReason: string | undefined;
   public pingCount = 0;
+  /** Bytes still waiting to be written; tests set it to simulate an upload. */
+  public bufferedAmount = 0;
 
   send(data: string): void {
     if (this.closed) throw new Error("send after close");
@@ -613,6 +615,73 @@ describe("PersistentWs", () => {
       ws.pushMessage({ type: "response.created" });
       vi.advanceTimersByTime(2_000);
       expect(persistent.isAlive()).toBe(true);
+    });
+
+    const createRequest = { type: "response.create" as const, model: "m", instructions: "", input: [] };
+
+    // Regression: eviction used to drop the session without settling send(),
+    // and also cleared the response-start timer and abort listener, so the
+    // proxy handler waited forever and held the client key's slot.
+    it("rejects a send still waiting for its first frame when liveness evicts the ws", async () => {
+      const { persistent } = newPersistentWs({ pingIntervalMs: 1_000, livenessTimeoutMs: 2_500 });
+      persistent.tryAcquire();
+      const settled = persistent
+        .send({ request: createRequest, signal: undefined, onRateLimits: undefined, reused: false })
+        .then(() => "resolved", (err: Error) => err.message);
+
+      await vi.advanceTimersByTimeAsync(3_000);
+
+      expect(persistent.isAlive()).toBe(false);
+      await expect(settled).resolves.toMatch(/evicted before the response started: liveness timeout/);
+    });
+
+    it("rejects a reused send with WsReusedConnectionError so the caller can retry", async () => {
+      const { persistent } = newPersistentWs({ pingIntervalMs: 1_000, livenessTimeoutMs: 2_500 });
+      persistent.tryAcquire();
+      const settled = persistent
+        .send({ request: createRequest, signal: undefined, onRateLimits: undefined, reused: true })
+        .then(() => null, (err: unknown) => err);
+
+      await vi.advanceTimersByTimeAsync(3_000);
+
+      expect(await settled).toBeInstanceOf(WsReusedConnectionError);
+    });
+
+    it("errors a live stream instead of ending it cleanly when liveness evicts the ws", async () => {
+      const { ws, persistent } = newPersistentWs({ pingIntervalMs: 1_000, livenessTimeoutMs: 2_500 });
+      persistent.tryAcquire();
+      const promise = persistent.send({ request: createRequest, signal: undefined, onRateLimits: undefined, reused: false });
+      await vi.advanceTimersByTimeAsync(0);
+      ws.pushMessage({ type: "response.output_text.delta", delta: "partial" });
+      const res = await promise;
+      const reader = res.body!.getReader();
+      expect((await reader.read()).done).toBe(false);
+      const next = reader.read().then(() => "ended cleanly", (err: Error) => err.message);
+
+      await vi.advanceTimersByTimeAsync(3_000);
+
+      await expect(next).resolves.toMatch(/evicted before terminal event: liveness timeout/);
+    });
+
+    it("treats a draining upload as proof of life, but not a stalled one", async () => {
+      const { ws, persistent } = newPersistentWs({ pingIntervalMs: 1_000, livenessTimeoutMs: 2_500 });
+      persistent.tryAcquire();
+      const settled = persistent
+        .send({ request: createRequest, signal: undefined, onRateLimits: undefined, reused: false })
+        .then(() => "resolved", (err: Error) => err.message);
+
+      // A large request uploads for 6s, far past the 2.5s timeout, with no pong.
+      ws.bufferedAmount = 50_000_000;
+      for (let i = 0; i < 6; i++) {
+        await vi.advanceTimersByTimeAsync(1_000);
+        ws.bufferedAmount -= 5_000_000;
+      }
+      expect(persistent.isAlive()).toBe(true);
+
+      // The upload stalls: the buffer stops draining and nothing comes back.
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(persistent.isAlive()).toBe(false);
+      await expect(settled).resolves.toMatch(/liveness timeout/);
     });
 
     it("disabled when livenessTimeoutMs=0 (escape hatch matches pingIntervalMs=0)", () => {
