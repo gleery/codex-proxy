@@ -45,6 +45,8 @@
  * - Caller `AbortSignal.abort()` → reject current send + immediately evict
  *   the WS (server may continue pushing tail frames that would corrupt the
  *   next reuser).
+ * - The pool evicting a busy WS itself (e.g. liveness timeout) follows the
+ *   same rules: reject before the first frame, error the stream after it.
  */
 
 import type { ParsedRateLimit } from "./rate-limit-headers.js";
@@ -103,6 +105,8 @@ export interface WsLike {
   // ws emits "pong" when the peer replies to our ping(); used as a liveness
   // signal to detect silently-broken connections middlebox-side.
   on(event: "pong", listener: () => void): void;
+  /** Bytes queued for sending but not yet written to the socket. */
+  readonly bufferedAmount?: number;
 }
 
 const WS_OPEN = 1;
@@ -212,6 +216,8 @@ export class PersistentWs {
    *  would otherwise eat a fresh-WS cache miss on the next real request. */
   private lastActivityAt: number;
   private readonly livenessTimeoutMs: number;
+  /** Outgoing buffer size seen by the previous keepalive tick. */
+  private lastBufferedAmount = 0;
 
   constructor(opts: {
     ws: WsLike;
@@ -265,6 +271,15 @@ export class PersistentWs {
     // stay silent for 60-120s; without control frames, NAT/LB paths can drop an
     // otherwise healthy pooled connection with close code 1006.
     if (this.dead || this.ws.readyState !== WS_OPEN) return;
+    // A large request (tens of MB through a slow proxy) can take longer than
+    // the liveness timeout to upload, and the peer's pong is queued behind it.
+    // An outgoing buffer that keeps draining proves the connection is alive;
+    // one that stops draining still trips the check below.
+    const buffered = this.ws.bufferedAmount ?? 0;
+    if (buffered > 0 && buffered < this.lastBufferedAmount) {
+      this.lastActivityAt = this.now();
+    }
+    this.lastBufferedAmount = buffered;
     // Liveness check: if the peer hasn't produced ANY signal (pong or message)
     // for too long, the connection is silently broken (middlebox dropped it
     // without sending FIN/RST). Evicting now beats eating a real-request cache
@@ -376,8 +391,10 @@ export class PersistentWs {
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         this.busy = false;
-        this.markDead(`send failed: ${msg}`);
+        // Reject first so the caller sees the original send error rather
+        // than markDead's generic eviction error.
         wrappedReject(err instanceof Error ? err : new Error(msg));
+        this.markDead(`send failed: ${msg}`);
       }
     });
   }
@@ -391,7 +408,15 @@ export class PersistentWs {
     }
   }
 
-  /** Force-close + mark dead + notify pool. Used on terminal failures. */
+  /** Force-close + mark dead + notify pool. Used on terminal failures.
+   *
+   *  Also settles the in-flight request. The close event that follows finds
+   *  no session, and the response-start timer and abort listener are removed
+   *  here, so a send() still waiting for its first frame must be rejected now
+   *  or it never settles: the proxy handler would wait forever and hold the
+   *  client key's concurrency slot. A live stream ends with an error unless
+   *  the terminal frame already arrived, so a cut-off response doesn't look
+   *  complete. */
   private markDead(reason: string): void {
     if (this.dead) return;
     this.dead = true;
@@ -400,11 +425,22 @@ export class PersistentWs {
       this.pingTimer = undefined;
     }
     try { this.ws.close(1000, reason.slice(0, 120)); } catch { /* already closing */ }
-    if (this.currentSession) {
-      this.clearResponseStartTimer(this.currentSession);
-      if (!this.currentSession.streamClosed) {
-        try { this.currentSession.controller.close(); } catch { /* already closed */ }
-        this.currentSession.streamClosed = true;
+    const sess = this.currentSession;
+    if (sess) {
+      this.clearResponseStartTimer(sess);
+      if (!sess.earlyDecisionMade) {
+        sess.earlyDecisionMade = true;
+        sess.reject(new Error(`WebSocket evicted before the response started: ${reason}`));
+      }
+      if (!sess.streamClosed) {
+        try {
+          if (sess.sawTerminalEvent) {
+            sess.controller.close();
+          } else {
+            sess.controller.error(new Error(`WebSocket evicted before terminal event: ${reason}`));
+          }
+        } catch { /* already closed */ }
+        sess.streamClosed = true;
       }
     }
     this.detachAbortListener();
@@ -485,6 +521,7 @@ export class PersistentWs {
       if (msg) {
         const classified = classifyWsErrorEvent(msg);
         if (classified) {
+          sess.earlyDecisionMade = true;
           sess.reject(new CodexApiError(classified.status, JSON.stringify(msg)));
           // Server connection-cap is a per-connection failure: evict so the
           // next caller opens a fresh WS instead of hitting the same wall.
