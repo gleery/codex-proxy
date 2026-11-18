@@ -62,7 +62,22 @@ function formatAuthError(path: string, message: string, code = "invalid_api_key"
   return makeOpenAIError(message, code);
 }
 
-function wrapStreamWithSlotRelease(body: ReadableStream<Uint8Array>, onRelease: () => void): ReadableStream<Uint8Array> {
+/**
+ * Pass an SSE body through unchanged and call `onRelease` once it ends —
+ * fully consumed, errored, or cancelled.
+ *
+ * `clientSignal` covers the client disconnecting before the response was
+ * handed to the server (e.g. a client timeout or cancel while the proxy still
+ * waits for upstream). @hono/node-server then never reads or cancels the
+ * body, so without the signal the pipe would hang forever: the slot would
+ * leak and the upstream stream would stay open. Aborting the pipe cancels the
+ * upstream body and releases the slot.
+ */
+function wrapStreamWithSlotRelease(
+  body: ReadableStream<Uint8Array>,
+  onRelease: () => void,
+  clientSignal?: AbortSignal,
+): ReadableStream<Uint8Array> {
   let released = false;
   const releaseOnce = () => {
     if (!released) {
@@ -80,7 +95,9 @@ function wrapStreamWithSlotRelease(body: ReadableStream<Uint8Array>, onRelease: 
     },
   });
 
-  body.pipeTo(transformStream.writable).then(releaseOnce, releaseOnce);
+  body
+    .pipeTo(transformStream.writable, clientSignal ? { signal: clientSignal } : undefined)
+    .then(releaseOnce, releaseOnce);
 
   return transformStream.readable;
 }
@@ -91,6 +108,10 @@ function wrapStreamWithSlotRelease(body: ReadableStream<Uint8Array>, onRelease: 
  * fully consumed / cancelled.
  */
 async function runReleasingAfterStream(c: Context, next: Next, onRelease: () => void): Promise<Response | void> {
+  // Read the signal before awaiting the handler: @hono/node-server creates the
+  // request's AbortController lazily and only aborts one that already exists
+  // when the client connection closes.
+  const clientSignal = c.req.raw.signal;
   let isStreamResponse = false;
   try {
     const res = await next();
@@ -100,7 +121,7 @@ async function runReleasingAfterStream(c: Context, next: Next, onRelease: () => 
     if (isEventStream && c.res && c.res.body && typeof (c.res.body as ReadableStream).getReader === "function") {
       isStreamResponse = true;
       const originalBody = c.res.body as ReadableStream<Uint8Array>;
-      c.res = new Response(wrapStreamWithSlotRelease(originalBody, onRelease), c.res);
+      c.res = new Response(wrapStreamWithSlotRelease(originalBody, onRelease, clientSignal), c.res);
     }
     return res;
   } finally {
